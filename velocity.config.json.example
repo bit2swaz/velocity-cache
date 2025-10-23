@@ -1,0 +1,27 @@
+{
+  "$schema": "https://velocitycache.dev/schema.json",
+  "remote_cache": {
+    "enabled": true,
+    "bucket": "velocity-cache-mvp-public",
+    "region": "us-east-1"
+  },
+  "scripts": {
+    "build": {
+      "command": "npm run build",
+      "inputs": [
+        "src/**/*",
+        "public/**/*",
+        "package.json",
+        "package-lock.json",
+        "tsconfig.json",
+        "next.config.js"
+      ],
+      "outputs": [
+        ".next/"
+      ],
+      "env_keys": [
+        "NODE_ENV"
+      ]
+    }
+  }
+}

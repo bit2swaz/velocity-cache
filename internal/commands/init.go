@@ -7,10 +7,11 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+
+	vc "github.com/bit2swaz/velocity-cache"
 )
 
 const configFileName = "velocity.config.json"
-const exampleTemplateName = "velocity.config.json.example"
 
 func newInitCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -38,32 +39,12 @@ func runInit(cmd *cobra.Command) error {
 		return fmt.Errorf("check %s: %w", configFileName, err)
 	}
 
-	templatePath, err := locateTemplate()
-	if err != nil {
-		return err
-	}
-	templateContents, err := os.ReadFile(templatePath)
-	if err != nil {
-		return fmt.Errorf("read %s template: %w", exampleTemplateName, err)
-	}
+	contents := vc.VelocityConfigTemplate()
 
-	if err := os.WriteFile(targetPath, templateContents, 0o644); err != nil {
+	if err := os.WriteFile(targetPath, contents, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", configFileName, err)
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", prefix(), infoStyle.Sprintf("Generated %s", configFileName))
 	return nil
-}
-
-func locateTemplate() (string, error) {
-	execPath, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("determine executable path: %w", err)
-	}
-	execPath, err = filepath.EvalSymlinks(execPath)
-	if err != nil {
-		return "", fmt.Errorf("resolve executable path: %w", err)
-	}
-	execDir := filepath.Dir(execPath)
-	return filepath.Join(execDir, exampleTemplateName), nil
 }

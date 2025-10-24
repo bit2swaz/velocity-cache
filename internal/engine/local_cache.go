@@ -13,6 +13,7 @@ const (
 	velocityDirName = ".velocity"
 	cacheDirName    = "cache"
 	cacheFileExt    = ".zip"
+	cacheMetaExt    = ".meta.json"
 )
 
 func checkLocal(cacheKey string) (string, bool, error) {
@@ -105,6 +106,17 @@ func localCacheFile(cacheKey string) (string, error) {
 	return filepath.Join(dir, cacheKey+cacheFileExt), nil
 }
 
+func localCacheMetadata(cacheKey string) (string, error) {
+	if err := validateCacheKey(cacheKey); err != nil {
+		return "", err
+	}
+	dir, err := localCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, cacheKey+cacheMetaExt), nil
+}
+
 func validateCacheKey(cacheKey string) error {
 	trimmed := strings.TrimSpace(cacheKey)
 	if trimmed == "" {
@@ -160,4 +172,27 @@ func sameFile(a, b string) bool {
 	}
 
 	return absA == absB
+}
+
+func CheckLocal(cacheKey string) (string, bool, error) {
+	return checkLocal(cacheKey)
+}
+
+func SaveLocal(cacheKey, zipPath string) (string, error) {
+	return saveLocal(cacheKey, zipPath)
+}
+
+func CleanLocal() error {
+	return cleanLocal()
+}
+
+func LocalCacheMetadataPath(cacheKey string) (string, error) {
+	return localCacheMetadata(cacheKey)
+}
+
+func CacheMetadataObjectName(cacheKey string) (string, error) {
+	if err := validateCacheKey(cacheKey); err != nil {
+		return "", err
+	}
+	return cacheKey + cacheMetaExt, nil
 }

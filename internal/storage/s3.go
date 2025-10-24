@@ -108,12 +108,35 @@ func NewS3Client(ctx context.Context, bucketName string) (*S3Client, error) {
 	uploader := manager.NewUploader(client)
 	downloader := manager.NewDownloader(client)
 
+	if err := ensureBucketExists(ctx, client, bucketName); err != nil {
+		return nil, fmt.Errorf("ensure bucket %s: %w", bucketName, err)
+	}
+
 	return &S3Client{
 		client:     client,
 		uploader:   uploader,
 		downloader: downloader,
 		bucketName: bucketName,
 	}, nil
+}
+
+func ensureBucketExists(ctx context.Context, client *s3.Client, bucket string) error {
+	if strings.TrimSpace(bucket) == "" {
+		return errors.New("bucket name is empty")
+	}
+
+	_, err := client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(bucket)})
+	if err == nil {
+		return nil
+	}
+
+	var exists *types.BucketAlreadyExists
+	var owned *types.BucketAlreadyOwnedByYou
+	if errors.As(err, &exists) || errors.As(err, &owned) {
+		return nil
+	}
+
+	return err
 }
 
 func (c *S3Client) checkRemote(ctx context.Context, cacheKey string) (bool, error) {
@@ -188,4 +211,16 @@ func (c *S3Client) uploadRemote(ctx context.Context, cacheKey, localPath string)
 	}()
 
 	return result
+}
+
+func (c *S3Client) CheckRemote(ctx context.Context, cacheKey string) (bool, error) {
+	return c.checkRemote(ctx, cacheKey)
+}
+
+func (c *S3Client) DownloadRemote(ctx context.Context, cacheKey, localPath string) error {
+	return c.downloadRemote(ctx, cacheKey, localPath)
+}
+
+func (c *S3Client) UploadRemote(ctx context.Context, cacheKey, localPath string) <-chan error {
+	return c.uploadRemote(ctx, cacheKey, localPath)
 }

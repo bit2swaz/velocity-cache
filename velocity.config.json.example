@@ -2,13 +2,14 @@
   "$schema": "https://velocitycache.dev/schema.json",
   "remote_cache": {
     "enabled": true,
-    "bucket": "velocity-cache-mvp-public",
+    "bucket": "velocity-cache-mvp-public-1",
     "region": "us-east-1"
   },
   "scripts": {
     "build": {
       "command": "npm run build",
       "inputs": [
+        "app/**/*",
         "src/**/*",
         "public/**/*",
         "package.json",

@@ -39,7 +39,7 @@ func TestLoad(t *testing.T) {
 	require.True(t, ok, "Scripts[\"build\"] missing")
 
 	assert.Equal(t, "npm run build", script.Command)
-	assert.Len(t, script.Inputs, 6, "expected 6 inputs")
+	assert.Len(t, script.Inputs, 7, "expected 7 inputs")
 	assert.Equal(t, []string{".next/"}, script.Outputs)
 	assert.Equal(t, []string{"NODE_ENV"}, script.EnvKeys)
 }

@@ -8,6 +8,7 @@
     "build": {
       "command": "npm run build",
       "inputs": [
+        "app/**/*",
         "src/**/*",
         "public/**/*",
         "package.json",

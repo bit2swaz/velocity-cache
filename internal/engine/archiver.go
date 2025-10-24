@@ -289,3 +289,11 @@ func extract(sourceZip string, outputs []string) (err error) {
 
 	return nil
 }
+
+func Compress(outputs []string, targetZip string) error {
+	return compress(outputs, targetZip)
+}
+
+func Extract(sourceZip string, outputs []string) error {
+	return extract(sourceZip, outputs)
+}

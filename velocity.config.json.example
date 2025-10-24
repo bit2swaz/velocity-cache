@@ -1,5 +1,4 @@
 {
-  "$schema": "https://velocitycache.dev/schema.json",
   "remote_cache": {
     "enabled": true,
     "bucket": "velocity-cache-mvp-public-1",

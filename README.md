@@ -6,7 +6,7 @@ a blazing-fast, open-source distributed build cache. built in go to accelerate y
 
 ---
 
-![velocity-cache demo gif](https://path-to-your.demo/velocity-cache.gif)
+![velocity-cache demo gif](termtosvg_mtmm_9z0.svg)
 
 _a 1-minute next.js build (cache miss) becomes a 1-second build (cache hit)._
 

@@ -84,7 +84,7 @@ the `init` command gives you a great starting point. here's what the fields mean
 
 ```json
 {
-  "$schema": "[https://velocitycache.dev/schema.json](https://velocitycache.dev/schema.json)",
+  "$schema": "https://velocitycache.dev/schema.json",
   "remote_cache": {
     "enabled": true,
     "bucket": "velocity-cache-mvp-public-1",
@@ -94,6 +94,7 @@ the `init` command gives you a great starting point. here's what the fields mean
     "build": {
       "command": "npm run build",
       "inputs": [
+        "app/**/*",
         "src/**/*",
         "public/**/*",
         "package.json",
@@ -139,7 +140,3 @@ pull requests are welcome\! for major changes, please open an issue first to dis
 ## license
 
 [mit](https://opensource.org/licenses/mit)
-
-```
-
-```

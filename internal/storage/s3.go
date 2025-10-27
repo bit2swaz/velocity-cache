@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -24,6 +25,7 @@ type S3Client struct {
 	client     *s3.Client
 	uploader   *manager.Uploader
 	downloader *manager.Downloader
+	presigner  *s3.PresignClient
 	bucketName string
 }
 
@@ -107,6 +109,7 @@ func NewS3Client(ctx context.Context, bucketName string) (*S3Client, error) {
 	})
 	uploader := manager.NewUploader(client)
 	downloader := manager.NewDownloader(client)
+	presigner := s3.NewPresignClient(client)
 
 	if err := ensureBucketExists(ctx, client, bucketName); err != nil {
 		return nil, fmt.Errorf("ensure bucket %s: %w", bucketName, err)
@@ -116,6 +119,7 @@ func NewS3Client(ctx context.Context, bucketName string) (*S3Client, error) {
 		client:     client,
 		uploader:   uploader,
 		downloader: downloader,
+		presigner:  presigner,
 		bucketName: bucketName,
 	}, nil
 }
@@ -223,4 +227,48 @@ func (c *S3Client) DownloadRemote(ctx context.Context, cacheKey, localPath strin
 
 func (c *S3Client) UploadRemote(ctx context.Context, cacheKey, localPath string) <-chan error {
 	return c.uploadRemote(ctx, cacheKey, localPath)
+}
+
+// GenerateDownloadURL creates a pre-signed download URL for the given cache key.
+func (c *S3Client) GenerateDownloadURL(ctx context.Context, cacheKey string, expiry time.Duration) (string, error) {
+	if strings.TrimSpace(cacheKey) == "" {
+		return "", errors.New("cache key is empty")
+	}
+	if expiry <= 0 {
+		return "", errors.New("expiry must be positive")
+	}
+
+	result, err := c.presigner.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(c.bucketName),
+		Key:    aws.String(cacheKey),
+	}, func(opts *s3.PresignOptions) {
+		opts.Expires = expiry
+	})
+	if err != nil {
+		return "", fmt.Errorf("presign get object %s: %w", cacheKey, err)
+	}
+
+	return result.URL, nil
+}
+
+// GenerateUploadURL creates a pre-signed upload URL for the given cache key.
+func (c *S3Client) GenerateUploadURL(ctx context.Context, cacheKey string, expiry time.Duration) (string, error) {
+	if strings.TrimSpace(cacheKey) == "" {
+		return "", errors.New("cache key is empty")
+	}
+	if expiry <= 0 {
+		return "", errors.New("expiry must be positive")
+	}
+
+	result, err := c.presigner.PresignPutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(c.bucketName),
+		Key:    aws.String(cacheKey),
+	}, func(opts *s3.PresignOptions) {
+		opts.Expires = expiry
+	})
+	if err != nil {
+		return "", fmt.Errorf("presign put object %s: %w", cacheKey, err)
+	}
+
+	return result.URL, nil
 }

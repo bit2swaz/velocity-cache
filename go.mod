@@ -1,6 +1,6 @@
 module github.com/bit2swaz/velocity-cache
 
-go 1.25.2
+go 1.25.0
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.39.3

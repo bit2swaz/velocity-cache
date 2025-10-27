@@ -1,6 +1,6 @@
-# velocity-cache
+# velocity-cache ⚡
 
-[![build status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/bit2swaz/velocity-cache) [![license: mit](https://img.shields.io/badge/license-mit-blue.svg)](https://opensource.org/licenses/mit)
+[![build status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/bit2swaz/velocity-cache) [![npm version](https://img.shields.io/npm/v/velocity-cache)](https://www.npmjs.com/package/velocity-cache) [![license: mit](https://img.shields.io/badge/license-mit-blue.svg)](https://opensource.org/licenses/mit)
 
 a blazing-fast, open-source distributed build cache. built in go to accelerate your ci/cd pipelines.
 
@@ -16,118 +16,189 @@ software teams waste millions of dollars and thousands of developer-hours waitin
 
 `velocity-cache` fixes this.
 
-it's a simple go cli that wraps your existing build scripts (like `npm run build`). it intelligently "fingerprints" your project's state. if it's seen that exact state before—on your machine, or a teammate's, or in ci—it downloads the pre-computed result from a shared cache in seconds instead of re-running the task.
+it's a simple cli that wraps your existing build scripts (like `npm run build`). it intelligently "fingerprints" your project's state. if it's seen that exact state before—on your machine, or a teammate's, or in ci—it downloads the pre-computed result from a **shared cache** in seconds instead of re-running the task.
 
 the first person pays the time cost. everyone else benefits instantly.
 
 ## features
 
 - **blazing fast:** built in go for high-performance, concurrent hashing and caching.
-- **distributed:** uses s3 (or any compatible service like r2/minio) to share a cache across your entire team and ci/cd.
-- **framework-agnostic:** works with any build script or framework (next.js, vite, etc.).
+- **distributed:** uses a **free public cache by default**, or your own private s3/r2 bucket. share cache across your entire team and ci/cd.
+- **framework-agnostic:** works with any build script or framework (next.js, vite, remix, etc.).
 - **smart:** respects your `.gitignore` and hashes file contents, not just timestamps.
-- **easy to use:** a single, dependency-free binary. just run `init` and `run`.
+- **zero config setup:** just run `npx velocity-cache init` and `npx velocity-cache run build`.
 
-## installation
+## installation & usage
 
-1.  go to the [latest release](https://github.com/bit2swaz/velocity-cache/releases/latest) page.
-2.  download the correct binary for your system (e.g., `velocity-cli-linux-amd64.tar.gz`).
-3.  extract and move it into your path.
+the easiest way to use `velocity-cache` is with `npx`.
 
-```bash
-# for linux/macos:
-tar -xvf velocity-cli-linux-amd64.tar.gz
-sudo mv velocity-cli-linux-amd64 /usr/local/bin/velocity
-
-# make sure it's executable
-sudo chmod +x /usr/local/bin/velocity
-```
-
-## usage
-
-### 1\. `velocity init`
+### 1. `npx velocity-cache init`
 
 in the root of your project, run the `init` command.
 
 ```bash
-velocity init
+npx velocity-cache init
 ```
 
-this will create a `velocity.config.json` file.
+this will create a `velocity.config.json` file. **you must edit this file** to tell `velocity-cache` about your specific project's build process (see configuration below).
 
-### 2\. `velocity run <script-name>`
+### 2\. `npx velocity-cache run <script-name>`
 
 this is the main command. instead of running `npm run build`, you now run:
 
 ```bash
-velocity run build
+npx velocity-cache run build
 ```
 
-`velocity` will:
+`velocity-cache` will:
 
-1.  generate a unique hash of your project.
-2.  check for that hash in your local (`.velocity/cache/`) and remote (s3) cache.
-3.  **if hit:** it will download the `.zip`, restore your output directories, and exit in \<1s.
-4.  **if miss:** it will run your command (`npm run build`), then save the result to both caches.
+1.  generate a unique hash of your project based on your config.
+2.  check your local cache (`.velocity/cache/`).
+3.  check the remote cache (public community cache by default, or your private bucket if configured).
+4.  **if hit:** download the `.zip`, restore your output directories, and exit in \<1s.
+5.  **if miss:** run your actual command (`npm run build`), then save the result locally and upload it to the remote cache.
 
-### 3\. `velocity clean`
+### 3\. `npx velocity-cache clean`
 
 if you ever need to clear your _local_ cache:
 
 ```bash
-velocity clean
+npx velocity-cache clean
 ```
+
+### permanent installation (optional)
+
+if you want to use `velocity-cache` without `npx` every time (e.g., in your `package.json` scripts), install it as a dev dependency:
+
+```bash
+npm install velocity-cache --save-dev
+# or
+yarn add velocity-cache --dev
+# or
+pnpm add velocity-cache --save-dev
+```
+
+then you can update your `package.json` like this:
+
+```json
+  "scripts": {
+    "build": "velocity-cache run build:real",
+    "build:real": "next build"
+  }
+```
+
+## caching behavior: public vs. private
+
+`velocity-cache` supports two remote caching modes:
+
+### 1\. public community cache (default) 🌍
+
+- **how it works:** if you **do not** provide any s3/r2 credentials (environment variables), `velocity-cache` will automatically use a free, shared, anonymous public cache hosted by the `velocity-cache` project.
+- **pros:**
+  - **zero setup:** works instantly after `init`.
+  - **free:** no cost for storage or bandwidth.
+- **cons:**
+  - **public:** your build artifacts are uploaded anonymously to a public bucket. **do not use this if your build outputs contain sensitive information.**
+  - **no guarantees:** cache entries expire after 7 days. intended for open-source projects and trying out `velocity-cache`.
+
+### 2\. private s3/r2 bucket (recommended for teams) 🔒
+
+- **how it works:** if you **do** provide s3/r2 credentials via environment variables, `velocity-cache` will use your configured private bucket.
+- **pros:**
+  - **secure:** your build artifacts stay within your control.
+  - **reliable:** you control the cache retention.
+- **cons:**
+  - **requires setup:** you need to create an s3/r2 bucket and api token.
+  - **costs:** you pay for storage/operations (though r2 is very generous).
+
+**to use a private bucket:**
+
+1.  **create an s3/r2 bucket** (e.g., `my-company-build-cache`).
+
+2.  **create an api token/access key** with read/write permissions for that bucket.
+
+3.  **set these environment variables** in your local machine or ci environment:
+
+    - **for cloudflare r2:**
+      ```bash
+      export R2_ACCOUNT_ID="your_account_id"
+      export R2_ACCESS_KEY_ID="your_access_key_id"
+      export R2_SECRET_ACCESS_KEY="your_secret_access_key"
+      ```
+    - **for aws s3:**
+      ```bash
+      export AWS_ACCESS_KEY_ID="your_access_key_id"
+      export AWS_SECRET_ACCESS_KEY="your_secret_access_key"
+      export AWS_REGION="your_bucket_region" # e.g., us-east-1
+      ```
+
+4.  **update your `velocity.config.json`** with your bucket name and region.
+
+`velocity-cache` will automatically detect these environment variables and switch to using your private bucket.
 
 ## configuration (`velocity.config.json`)
 
-the `init` command gives you a great starting point. here's what the fields mean:
+the `init` command gives you a starting point. **you must customize `inputs` and `outputs` for your project.**
 
 ```json
 {
-  "$schema": "https://velocitycache.dev/schema.json",
+  "$schema": "[https://velocitycache.dev/schema.json](https://velocitycache.dev/schema.json)",
   "remote_cache": {
     "enabled": true,
-    "bucket": "velocity-cache-mvp-public-1",
-    "region": "us-east-1"
+    // required only if using a private cache
+    "bucket": "your-private-bucket-name",
+    "region": "auto" // e.g., us-east-1 for aws, auto for r2
   },
   "scripts": {
     "build": {
-      "command": "npm run build",
+      // this key must match the script you run with 'velocity-cache run ...'
+      "command": "npm run build", // the *actual* build command, change to "npm run build:real if permanent installation
       "inputs": [
-        "app/**/*",
+        // files/globs that affect the build output
         "src/**/*",
         "public/**/*",
         "package.json",
-        "package-lock.json",
+        "package-lock.json", // include lock files!
         "tsconfig.json",
         "next.config.js"
+        // add your config files: vite.config.ts, postcss.config.js, .env, etc.
       ],
-      "outputs": [".next/"],
-      "env_keys": ["NODE_ENV"]
+      "outputs": [
+        // directories created by the 'command'
+        ".next/"
+        // change this for other frameworks (e.g., "dist/", "build/")
+      ],
+      "env_keys": [
+        // env vars that affect the build output
+        "NODE_ENV",
+        "NEXT_PUBLIC_API_URL"
+        // add keys like VITE_*, CI, etc.
+      ]
     }
+    // you can add other scripts here, like "test", "lint", etc.
+    // "test": { ... }
   }
 }
 ```
 
-- **`remote_cache`**: configures the s3-compatible remote cache. this is how you share with your team.
+- **`remote_cache`**: configures the remote cache.
 
-  - `enabled`: set to `true` to use the remote cache.
-  - `bucket`: the name of your s3/r2 bucket.
-  - `region`: the region of your bucket (e.g., `us-east-1` for aws, `auto` for r2).
+  - `enabled`: set to `true` to use _any_ remote cache (public or private). set to `false` for local-only caching.
+  - `bucket`, `region`: **only required if using a private cache.** ignored if using the public cache. `velocity-cache` uses the environment variables to authenticate.
 
 - **`scripts`**: a map of script names you want to cache.
 
-  - **`"build"`**: the name that maps to `package.json` (you'll run `velocity run build`).
-  - **`command`**: the _actual_ command to run on a cache miss (e.g., `npm run build`).
-  - **`inputs`**: this is the most important part. it's a list of files and globs that `velocity` will hash. if any of these files change, it's a cache miss. _be sure to include lock files\!_
-  - **`outputs`**: a list of directories that are created by your `command`. `velocity` will zip these up on a cache miss and restore them on a cache hit.
-  - **`env_keys`**: a list of environment variables to include in the hash. for example, a `NODE_ENV=production` build should have a different cache key than a `NODE_ENV=development` build.
+  - **`"build"`**: the name that maps to `package.json` (you'll run `npx velocity-cache run build`).
+  - **`command`**: the _actual_ command to run on a cache miss (e.g., `npm run build:real`).
+  - **`inputs`**: **critical.** list of files/globs `velocity` will hash. changes here trigger a cache miss.
+  - **`outputs`**: **critical.** list of directories created by `command`. these are cached.
+  - **`env_keys`**: list of environment variables included in the hash.
 
 ## how it works
 
-`velocity` creates a unique "fingerprint" (a sha256 hash) for your project state by combining:
+`velocity-cache` creates a unique "fingerprint" (a sha256 hash) for your project state by combining:
 
-1.  a hash of your command (e.g., `"npm run build"`).
+1.  a hash of your command (e.g., `"npm run build:real"`).
 2.  a hash of your relevant environment variables (e.g., `"NODE_ENV=production"`).
 3.  a hash of all your `input` files' contents (respecting `.gitignore`).
 

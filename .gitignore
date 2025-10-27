@@ -1,3 +1,4 @@
 velocity-cli
 build/
 node_modules
+.env

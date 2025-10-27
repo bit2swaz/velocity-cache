@@ -6,7 +6,7 @@ const { rimraf } = require('rimraf');
 const fs = require('fs');
 
 // --- Configuration ---
-const VERSION = 'v1.0.0'; // Make sure this matches your GitHub release tag!
+const VERSION = 'v1.0.1'; // Make sure this matches your GitHub release tag!
 const REPO_URL = 'bit2swaz/velocity-cache';
 // --- End Configuration ---
 

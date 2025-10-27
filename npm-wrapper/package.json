@@ -1,6 +1,6 @@
 {
   "name": "velocity-cache",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A blazing-fast, open-source distributed build cache. Built in Go.",
   "author": "Aditya Mishra (bit2swaz)",
   "license": "MIT",

@@ -1,2 +1,4 @@
 velocity-cli
 build/
+node_modules
+npm-wrapper

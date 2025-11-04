@@ -13,24 +13,24 @@ const (
 
 // Config is the top-level configuration struct.
 type Config struct {
-	RemoteCache RemoteCacheConfig     `mapstructure:"remote_cache"`
-	Packages    []string              `mapstructure:"packages"`
-	Tasks       map[string]TaskConfig `mapstructure:"tasks"`
+	RemoteCache RemoteCacheConfig     `mapstructure:"remote_cache" json:"remote_cache"`
+	Packages    []string              `mapstructure:"packages" json:"packages"`
+	Tasks       map[string]TaskConfig `mapstructure:"tasks" json:"tasks"`
 }
 
 // RemoteCacheConfig holds configuration for the S3 cache.
 type RemoteCacheConfig struct {
-	Enabled bool   `mapstructure:"enabled"`
-	Bucket  string `mapstructure:"bucket"`
-	Region  string `mapstructure:"region"`
+	Enabled bool   `mapstructure:"enabled" json:"enabled"`
+	Bucket  string `mapstructure:"bucket" json:"bucket"`
+	Region  string `mapstructure:"region" json:"region"`
 }
 
 type TaskConfig struct {
-	Command   string   `mapstructure:"command"`
-	DependsOn []string `mapstructure:"dependsOn"`
-	Inputs    []string `mapstructure:"inputs"`
-	Outputs   []string `mapstructure:"outputs"`
-	EnvKeys   []string `mapstructure:"env_keys"`
+	Command   string   `mapstructure:"command" json:"command"`
+	DependsOn []string `mapstructure:"dependsOn" json:"dependsOn"`
+	Inputs    []string `mapstructure:"inputs" json:"inputs"`
+	Outputs   []string `mapstructure:"outputs" json:"outputs"`
+	EnvKeys   []string `mapstructure:"env_keys" json:"env_keys"`
 }
 
 // Load reads velocity.config.json from the current directory and unmarshals it into Config.

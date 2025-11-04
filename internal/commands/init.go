@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -51,17 +52,19 @@ func runInit(cmd *cobra.Command) error {
 			return fmt.Errorf("generate velocity config from turbo.json: %w", err)
 		}
 
-		contents, err := json.MarshalIndent(cfg, "", "  ")
-		if err != nil {
-			return fmt.Errorf("marshal velocity config: %w", err)
-		}
-		contents = append(contents, '\n')
-
-		if err := os.WriteFile(targetPath, contents, 0o644); err != nil {
-			return fmt.Errorf("write %s: %w", configFileName, err)
+		if err := writeConfig(targetPath, cfg); err != nil {
+			return err
 		}
 
 		fmt.Fprintln(cmd.OutOrStdout(), "[VelocityCache] Detected turbo.json and created a velocity.config.json for you. Please review it for accuracy.")
+		return nil
+	}
+
+	if cfg, ok := detectLanguageProject(wd); ok {
+		if err := writeConfig(targetPath, cfg); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", prefix(), infoStyle.Sprintf("Generated %s", configFileName))
 		return nil
 	}
 
@@ -73,6 +76,155 @@ func runInit(cmd *cobra.Command) error {
 
 	fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", prefix(), infoStyle.Sprintf("Generated %s", configFileName))
 	return nil
+}
+
+func writeConfig(path string, cfg *config.Config) error {
+	contents, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal velocity config: %w", err)
+	}
+	contents = append(contents, '\n')
+
+	if err := os.WriteFile(path, contents, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", configFileName, err)
+	}
+
+	return nil
+}
+
+type languageDetector func(root string) (*config.Config, bool, error)
+
+func detectLanguageProject(root string) (*config.Config, bool) {
+	detectors := []languageDetector{
+		detectPythonProject,
+		detectRustProject,
+		detectGoProject,
+	}
+
+	for _, detector := range detectors {
+		cfg, ok, err := detector(root)
+		if err != nil {
+			return nil, false
+		}
+		if ok {
+			return cfg, true
+		}
+	}
+
+	return nil, false
+}
+
+func detectPythonProject(root string) (*config.Config, bool, error) {
+	requirements := filepath.Join(root, "requirements.txt")
+	poetry := filepath.Join(root, "poetry.lock")
+
+	if _, err := os.Stat(requirements); err == nil {
+		return pythonConfig(), true, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, false, err
+	}
+
+	if _, err := os.Stat(poetry); err == nil {
+		return pythonConfig(), true, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, false, err
+	}
+
+	return nil, false, nil
+}
+
+func pythonConfig() *config.Config {
+	return &config.Config{
+		Tasks: map[string]config.TaskConfig{
+			"test": {
+				Command:   "pytest",
+				Inputs:    []string{"**/*.py", "requirements.txt", "poetry.lock"},
+				Outputs:   []string{".venv/", ".cache/", "__pycache__/"},
+				DependsOn: nil,
+				EnvKeys:   nil,
+			},
+			"lint": {
+				Command: "flake8",
+				Inputs:  []string{"**/*.py", "requirements.txt", "poetry.lock"},
+				Outputs: []string{".venv/", ".cache/", "__pycache__/"},
+			},
+		},
+	}
+}
+
+func detectRustProject(root string) (*config.Config, bool, error) {
+	cargo := filepath.Join(root, "Cargo.toml")
+	if _, err := os.Stat(cargo); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+
+	cfg := &config.Config{
+		Tasks: map[string]config.TaskConfig{
+			"build": {
+				Command: "cargo build --release",
+				Inputs:  []string{"src/**/*.rs", "Cargo.toml", "Cargo.lock"},
+				Outputs: []string{"target/"},
+			},
+			"test": {
+				Command: "cargo test",
+				Inputs:  []string{"src/**/*.rs", "Cargo.toml", "Cargo.lock"},
+				Outputs: []string{"target/"},
+			},
+		},
+	}
+	return cfg, true, nil
+}
+
+func detectGoProject(root string) (*config.Config, bool, error) {
+	gomod := filepath.Join(root, "go.mod")
+	data, err := os.ReadFile(gomod)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+
+	binaryName := deriveGoBinaryName(root, string(data))
+
+	cfg := &config.Config{
+		Tasks: map[string]config.TaskConfig{
+			"build": {
+				Command: fmt.Sprintf("go build -o bin/%s ./cmd/...", binaryName),
+				Inputs:  []string{"**/*.go", "go.mod", "go.sum"},
+				Outputs: []string{"bin/"},
+			},
+		},
+	}
+	return cfg, true, nil
+}
+
+func deriveGoBinaryName(root, goModContents string) string {
+	moduleName := ""
+	for _, line := range strings.Split(goModContents, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "module ") {
+			moduleName = strings.TrimSpace(strings.TrimPrefix(line, "module "))
+			moduleName = strings.Trim(moduleName, "\"'")
+			break
+		}
+	}
+
+	if moduleName != "" {
+		segments := strings.Split(moduleName, "/")
+		if last := strings.TrimSpace(segments[len(segments)-1]); last != "" {
+			return last
+		}
+	}
+
+	binaryName := strings.TrimSpace(filepath.Base(root))
+	if binaryName == "" || binaryName == string(filepath.Separator) {
+		return "app"
+	}
+	return binaryName
 }
 
 type turboPipelineTask struct {

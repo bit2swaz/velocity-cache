@@ -16,8 +16,9 @@ type TaskNode struct {
 	Dependencies []*TaskNode // Other tasks it must wait for
 
 	// State for execution
-	State    int // 0=pending, 1=running, 2=complete, 3=failed
-	CacheKey string
+	State     int // 0=pending, 1=running, 2=complete, 3=failed
+	CacheKey  string
+	LastError error
 }
 
 // BuildTaskGraph recursively constructs the dependency graph for the given task and package.

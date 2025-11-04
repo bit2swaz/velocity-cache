@@ -12,7 +12,7 @@ import (
 
 func TestEnvHashing(t *testing.T) {
 	t.Setenv("NODE_ENV", "")
-	cfg := config.ScriptConfig{
+	cfg := config.TaskConfig{
 		Command: "npm run build",
 		EnvKeys: []string{"NODE_ENV"},
 	}
@@ -30,7 +30,7 @@ func TestEnvHashing(t *testing.T) {
 }
 
 func TestCommandHashing(t *testing.T) {
-	cfg := config.ScriptConfig{
+	cfg := config.TaskConfig{
 		Command: "npm run build",
 	}
 
@@ -60,7 +60,7 @@ func TestFileInputsAffectHash(t *testing.T) {
 
 	require.NoError(t, os.Chdir(tmpDir), "change to temp directory")
 
-	cfg := config.ScriptConfig{
+	cfg := config.TaskConfig{
 		Command: "npm run build",
 		Inputs:  []string{"*.txt"},
 	}
@@ -89,7 +89,7 @@ func TestGitignoreFiltersFiles(t *testing.T) {
 
 	require.NoError(t, os.Chdir(tmpDir), "change to temp directory")
 
-	cfg := config.ScriptConfig{
+	cfg := config.TaskConfig{
 		Command: "npm run build",
 		Inputs:  []string{"*.txt"},
 	}
@@ -127,7 +127,7 @@ func TestGenerateCacheKeyIntegration(t *testing.T) {
 
 	require.NoError(t, os.Chdir(tmpDir), "change to temp directory")
 
-	cfg := config.ScriptConfig{
+	cfg := config.TaskConfig{
 		Command: "npm run build",
 		Inputs:  []string{"**/*.txt"},
 	}

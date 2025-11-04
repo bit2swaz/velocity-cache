@@ -20,7 +20,7 @@ import (
 )
 
 // GenerateCacheKey returns a deterministic cache key for the supplied script config.
-func GenerateCacheKey(cfg config.ScriptConfig) (string, error) {
+func GenerateCacheKey(cfg config.TaskConfig) (string, error) {
 	var envHash string
 	if len(cfg.EnvKeys) > 0 {
 		envPairs := make([]string, 0, len(cfg.EnvKeys))

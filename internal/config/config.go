@@ -13,8 +13,9 @@ const (
 
 // Config is the top-level configuration struct.
 type Config struct {
-	RemoteCache RemoteCacheConfig       `mapstructure:"remote_cache"`
-	Scripts     map[string]ScriptConfig `mapstructure:"scripts"`
+	RemoteCache RemoteCacheConfig     `mapstructure:"remote_cache"`
+	Packages    []string              `mapstructure:"packages"`
+	Tasks       map[string]TaskConfig `mapstructure:"tasks"`
 }
 
 // RemoteCacheConfig holds configuration for the S3 cache.
@@ -24,12 +25,12 @@ type RemoteCacheConfig struct {
 	Region  string `mapstructure:"region"`
 }
 
-// ScriptConfig defines a single script to be cached.
-type ScriptConfig struct {
-	Command string   `mapstructure:"command"`
-	Inputs  []string `mapstructure:"inputs"`
-	Outputs []string `mapstructure:"outputs"`
-	EnvKeys []string `mapstructure:"env_keys"`
+type TaskConfig struct {
+	Command   string   `mapstructure:"command"`
+	DependsOn []string `mapstructure:"dependsOn"`
+	Inputs    []string `mapstructure:"inputs"`
+	Outputs   []string `mapstructure:"outputs"`
+	EnvKeys   []string `mapstructure:"env_keys"`
 }
 
 // Load reads velocity.config.json from the current directory and unmarshals it into Config.

@@ -15,11 +15,11 @@ import (
 
 // Execute runs the script command defined in cfg and streams output directly to the caller's terminal.
 // It returns the command's exit code along with any execution error.
-func Execute(cfg config.ScriptConfig) (int, error) {
+func Execute(cfg config.TaskConfig) (int, error) {
 	return executeWithWriters(cfg, os.Stdout, os.Stderr)
 }
 
-func executeWithWriters(cfg config.ScriptConfig, stdout, stderr io.Writer) (int, error) {
+func executeWithWriters(cfg config.TaskConfig, stdout, stderr io.Writer) (int, error) {
 	command := strings.TrimSpace(cfg.Command)
 	if command == "" {
 		return -1, errors.New("command is empty")

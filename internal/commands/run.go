@@ -97,7 +97,7 @@ func runScript(cmd *cobra.Command, scriptName string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	script, ok := cfg.Scripts[scriptName]
+	script, ok := cfg.Tasks[scriptName]
 	if !ok {
 		return fmt.Errorf("script %q not found in velocity.config.json", scriptName)
 	}

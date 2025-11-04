@@ -30,7 +30,7 @@ func main() {
 	progPath := filepath.Join(tmpDir, "main.go")
 	require.NoError(t, os.WriteFile(progPath, []byte(script), 0o644))
 
-	cfg := config.ScriptConfig{Command: "go run " + progPath}
+	cfg := config.TaskConfig{Command: "go run " + progPath}
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -43,7 +43,7 @@ func main() {
 }
 
 func TestExecuteFailure(t *testing.T) {
-	cfg := config.ScriptConfig{Command: "sh -c 'echo fail >&2; exit 1'"}
+	cfg := config.TaskConfig{Command: "sh -c 'echo fail >&2; exit 1'"}
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

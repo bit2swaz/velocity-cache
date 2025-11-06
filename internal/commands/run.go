@@ -377,6 +377,10 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 	savedDuration, hasSavedDuration := loadCacheDuration(cacheKey)
 	start := time.Now()
 	taskCfg := task.TaskConfig
+	packagePath := ""
+	if task.Package != nil {
+		packagePath = task.Package.Path
+	}
 
 	cacheZip, found, err := engine.CheckLocal(cacheKey)
 	if err != nil {
@@ -386,7 +390,7 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 		return "", err
 	}
 	if found {
-		if err := engine.Extract(cacheZip, taskCfg.Outputs); err != nil {
+		if err := engine.Extract(cacheZip, taskCfg.Outputs, packagePath); err != nil {
 			task.State = 3
 			err = fmt.Errorf("extract local cache for %s: %w", task.ID, err)
 			task.LastError = err
@@ -439,7 +443,7 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 					return "", err
 				}
 
-				if err := engine.Extract(localZip, taskCfg.Outputs); err != nil {
+				if err := engine.Extract(localZip, taskCfg.Outputs, packagePath); err != nil {
 					task.State = 3
 					err = fmt.Errorf("extract public cache for %s: %w", task.ID, err)
 					task.LastError = err
@@ -491,7 +495,7 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 
 				savedDuration, hasSavedDuration = loadCacheDuration(cacheKey)
 
-				if err := engine.Extract(localZip, taskCfg.Outputs); err != nil {
+				if err := engine.Extract(localZip, taskCfg.Outputs, packagePath); err != nil {
 					task.State = 3
 					err = fmt.Errorf("extract remote cache for %s: %w", task.ID, err)
 					task.LastError = err
@@ -507,10 +511,6 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 
 	logCacheMissExecuting(e.out, taskCfg.Command)
 	execStart := time.Now()
-	packagePath := ""
-	if task.Package != nil {
-		packagePath = task.Package.Path
-	}
 	exitCode, execErr := engine.Execute(taskCfg, packagePath)
 	execDuration := time.Since(execStart)
 	if execErr != nil {
@@ -531,7 +531,7 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 	defer os.RemoveAll(tempDir)
 
 	tempZip := filepath.Join(tempDir, cacheKey+".zip")
-	if err := engine.Compress(taskCfg.Outputs, tempZip); err != nil {
+	if err := engine.Compress(taskCfg.Outputs, tempZip, packagePath); err != nil {
 		task.State = 3
 		err = fmt.Errorf("compress outputs for %s: %w", task.ID, err)
 		task.LastError = err

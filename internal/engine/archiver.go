@@ -12,9 +12,27 @@ import (
 	"strings"
 )
 
-func compress(outputs []string, targetZip string) (err error) {
+func compress(outputs []string, targetZip string, packagePath string) (err error) {
 	if len(outputs) == 0 {
 		return errors.New("compress: no outputs provided")
+	}
+
+	// If a packagePath is provided, change into it for the duration of the operation.
+	originalWd := ""
+	if strings.TrimSpace(packagePath) != "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("compress: getwd: %w", err)
+		}
+		if err := os.Chdir(packagePath); err != nil {
+			return fmt.Errorf("compress: chdir to %s: %w", packagePath, err)
+		}
+		originalWd = wd
+		defer func() {
+			if originalWd != "" {
+				_ = os.Chdir(originalWd)
+			}
+		}()
 	}
 
 	absTarget, err := filepath.Abs(targetZip)
@@ -148,10 +166,30 @@ func compress(outputs []string, targetZip string) (err error) {
 	return nil
 }
 
-func extract(sourceZip string, outputs []string) (err error) {
+func extract(sourceZip string, outputs []string, packagePath string) (err error) {
 	if len(outputs) == 0 {
 		return errors.New("extract: no outputs provided")
 	}
+
+	originalWd := ""
+	if strings.TrimSpace(packagePath) != "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("extract: getwd: %w", err)
+		}
+		if err := os.Chdir(packagePath); err != nil {
+			return fmt.Errorf("extract: chdir to %s: %w", packagePath, err)
+		}
+		originalWd = wd
+		defer func() {
+			if originalWd != "" {
+				_ = os.Chdir(originalWd)
+			}
+		}()
+	}
+
+	// sourceZip is expected to be an absolute path (temporary file). Opening by absolute
+	// path is safe even after chdir, but we still compute a cleaned path first.
 
 	reader, err := zip.OpenReader(filepath.Clean(sourceZip))
 	if err != nil {
@@ -290,10 +328,11 @@ func extract(sourceZip string, outputs []string) (err error) {
 	return nil
 }
 
-func Compress(outputs []string, targetZip string) error {
-	return compress(outputs, targetZip)
+// compress/extract public wrappers accept packagePath and forward to internal functions.
+func Compress(outputs []string, targetZip string, packagePath string) error {
+	return compress(outputs, targetZip, packagePath)
 }
 
-func Extract(sourceZip string, outputs []string) error {
-	return extract(sourceZip, outputs)
+func Extract(sourceZip string, outputs []string, packagePath string) error {
+	return extract(sourceZip, outputs, packagePath)
 }

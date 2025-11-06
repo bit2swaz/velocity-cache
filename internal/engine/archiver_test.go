@@ -27,7 +27,7 @@ func TestCompressExtractRoundTrip(t *testing.T) {
 
 	archivePath := filepath.Join(tempDir, "artifact.zip")
 
-	if err := compress([]string{alpha, beta}, archivePath); err != nil {
+	if err := compress([]string{alpha, beta}, archivePath, ""); err != nil {
 		t.Fatalf("compress returned error: %v", err)
 	}
 
@@ -48,7 +48,7 @@ func TestCompressExtractRoundTrip(t *testing.T) {
 	mustMkdirAll(t, junkDir)
 	mustWriteFile(t, filepath.Join(junkDir, "junk"), "junk")
 
-	if err := extract(archivePath, []string{alpha, beta}); err != nil {
+	if err := extract(archivePath, []string{alpha, beta}, ""); err != nil {
 		t.Fatalf("extract returned error: %v", err)
 	}
 
@@ -74,7 +74,7 @@ func TestCompressDuplicateBaseName(t *testing.T) {
 	mustMkdirAll(t, first)
 	mustMkdirAll(t, second)
 
-	err := compress([]string{first, second}, filepath.Join(tempDir, "dup.zip"))
+	err := compress([]string{first, second}, filepath.Join(tempDir, "dup.zip"), "")
 	if err == nil || !strings.Contains(err.Error(), "duplicate") {
 		t.Fatalf("expected duplicate base name error, got %v", err)
 	}
@@ -82,7 +82,7 @@ func TestCompressDuplicateBaseName(t *testing.T) {
 
 func TestCompressMissingDirectory(t *testing.T) {
 	tempDir := t.TempDir()
-	err := compress([]string{filepath.Join(tempDir, "missing")}, filepath.Join(tempDir, "missing.zip"))
+	err := compress([]string{filepath.Join(tempDir, "missing")}, filepath.Join(tempDir, "missing.zip"), "")
 	if err == nil || !strings.Contains(err.Error(), "stat") {
 		t.Fatalf("expected stat error for missing directory, got %v", err)
 	}
@@ -97,7 +97,7 @@ func TestExtractUnexpectedRoot(t *testing.T) {
 	target := filepath.Join(tempDir, "alpha")
 	mustMkdirAll(t, target)
 
-	err := extract(archive, []string{target})
+	err := extract(archive, []string{target}, "")
 	if err == nil || !strings.Contains(err.Error(), "unexpected archive root") {
 		t.Fatalf("expected unexpected archive root error, got %v", err)
 	}

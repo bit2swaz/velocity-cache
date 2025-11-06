@@ -17,14 +17,14 @@ func TestEnvHashing(t *testing.T) {
 		EnvKeys: []string{"NODE_ENV"},
 	}
 
-	hash1, err := GenerateCacheKey(cfg, nil)
+	hash1, err := GenerateCacheKey(cfg, nil, "")
 	require.NoError(t, err, "first hash should succeed")
-	hash2, err := GenerateCacheKey(cfg, nil)
+	hash2, err := GenerateCacheKey(cfg, nil, "")
 	require.NoError(t, err, "second hash should succeed")
 	assert.Equal(t, hash1, hash2, "expected deterministic hash")
 
 	t.Setenv("NODE_ENV", "production")
-	hash3, err := GenerateCacheKey(cfg, nil)
+	hash3, err := GenerateCacheKey(cfg, nil, "")
 	require.NoError(t, err, "hash with env change should succeed")
 	assert.NotEqual(t, hash1, hash3, "expected env change to alter hash")
 }
@@ -34,14 +34,14 @@ func TestCommandHashing(t *testing.T) {
 		Command: "npm run build",
 	}
 
-	hash1, err := GenerateCacheKey(cfg, nil)
+	hash1, err := GenerateCacheKey(cfg, nil, "")
 	require.NoError(t, err, "first hash should succeed")
-	hash2, err := GenerateCacheKey(cfg, nil)
+	hash2, err := GenerateCacheKey(cfg, nil, "")
 	require.NoError(t, err, "second hash should succeed")
 	assert.Equal(t, hash1, hash2, "expected deterministic hash")
 
 	cfg.Command = "npm run test"
-	hash3, err := GenerateCacheKey(cfg, nil)
+	hash3, err := GenerateCacheKey(cfg, nil, "")
 	require.NoError(t, err, "hash after command change should succeed")
 	assert.NotEqual(t, hash1, hash3, "expected command change to alter hash")
 }
@@ -52,25 +52,17 @@ func TestFileInputsAffectHash(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "a.txt"), []byte("a"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "b.txt"), []byte("b"), 0o644))
 
-	wd, err := os.Getwd()
-	require.NoError(t, err, "get working directory")
-	t.Cleanup(func() {
-		require.NoError(t, os.Chdir(wd), "restore working directory")
-	})
-
-	require.NoError(t, os.Chdir(tmpDir), "change to temp directory")
-
 	cfg := config.TaskConfig{
 		Command: "npm run build",
 		Inputs:  []string{"*.txt"},
 	}
 
-	hash1, err := GenerateCacheKey(cfg, nil)
+	hash1, err := GenerateCacheKey(cfg, nil, tmpDir)
 	require.NoError(t, err, "hash with initial files should succeed")
 
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "c.txt"), []byte("c"), 0o644))
 
-	hash2, err := GenerateCacheKey(cfg, nil)
+	hash2, err := GenerateCacheKey(cfg, nil, tmpDir)
 	require.NoError(t, err, "hash after adding file should succeed")
 	assert.NotEqual(t, hash1, hash2, "adding matching file should alter hash")
 }
@@ -81,25 +73,17 @@ func TestGitignoreFiltersFiles(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte("ignored.txt\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "included.txt"), []byte("include"), 0o644))
 
-	wd, err := os.Getwd()
-	require.NoError(t, err, "get working directory")
-	t.Cleanup(func() {
-		require.NoError(t, os.Chdir(wd), "restore working directory")
-	})
-
-	require.NoError(t, os.Chdir(tmpDir), "change to temp directory")
-
 	cfg := config.TaskConfig{
 		Command: "npm run build",
 		Inputs:  []string{"*.txt"},
 	}
 
-	hash1, err := GenerateCacheKey(cfg, nil)
+	hash1, err := GenerateCacheKey(cfg, nil, tmpDir)
 	require.NoError(t, err, "hash with ignored file absent should succeed")
 
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "ignored.txt"), []byte("ignore"), 0o644))
 
-	hash2, err := GenerateCacheKey(cfg, nil)
+	hash2, err := GenerateCacheKey(cfg, nil, tmpDir)
 	require.NoError(t, err, "hash with ignored file should succeed")
 	assert.Equal(t, hash1, hash2, "ignored file should not alter hash")
 }
@@ -119,14 +103,6 @@ func TestGenerateCacheKeyIntegration(t *testing.T) {
 	write("ignored.txt", "ignored contents")
 	write("ignored-dir/c.txt", "ignored directory file")
 
-	wd, err := os.Getwd()
-	require.NoError(t, err, "get working directory")
-	t.Cleanup(func() {
-		require.NoError(t, os.Chdir(wd), "restore working directory")
-	})
-
-	require.NoError(t, os.Chdir(tmpDir), "change to temp directory")
-
 	cfg := config.TaskConfig{
 		Command: "npm run build",
 		Inputs:  []string{"**/*.txt"},
@@ -134,7 +110,7 @@ func TestGenerateCacheKeyIntegration(t *testing.T) {
 
 	run := func() string {
 		t.Helper()
-		hash, err := GenerateCacheKey(cfg, nil)
+		hash, err := GenerateCacheKey(cfg, nil, tmpDir)
 		require.NoError(t, err, "GenerateCacheKey should succeed")
 		return hash
 	}
@@ -194,12 +170,12 @@ func TestGenerateTaskNodeCacheKeyIncludesNodeIdentity(t *testing.T) {
 func TestGenerateCacheKeyDependsOnDependencyKeys(t *testing.T) {
 	cfg := config.TaskConfig{Command: "npm run build"}
 
-	base, err := GenerateCacheKey(cfg, nil)
+	base, err := GenerateCacheKey(cfg, nil, "")
 	require.NoError(t, err, "base key should compute")
 
-	withDepsOrder1, err := GenerateCacheKey(cfg, []string{"dep-b", "dep-a"})
+	withDepsOrder1, err := GenerateCacheKey(cfg, []string{"dep-b", "dep-a"}, "")
 	require.NoError(t, err, "key with deps should compute")
-	withDepsOrder2, err := GenerateCacheKey(cfg, []string{"dep-a", "dep-b"})
+	withDepsOrder2, err := GenerateCacheKey(cfg, []string{"dep-a", "dep-b"}, "")
 	require.NoError(t, err, "key with deps in different order should compute")
 
 	assert.NotEqual(t, base, withDepsOrder1, "dependency keys should influence hash")
@@ -255,6 +231,9 @@ func TestDependencyHashPropagation(t *testing.T) {
 	write("packages/a/input.txt", "initial-a")
 	write("packages/b/input.txt", "initial-b")
 
+	packageAPath := filepath.Join(tmpDir, "packages", "a")
+	packageBPath := filepath.Join(tmpDir, "packages", "b")
+
 	wd, err := os.Getwd()
 	require.NoError(t, err, "get working directory")
 	t.Cleanup(func() {
@@ -266,20 +245,20 @@ func TestDependencyHashPropagation(t *testing.T) {
 	taskA := &TaskNode{
 		ID:         "packages/a#build",
 		TaskName:   "build",
-		TaskConfig: config.TaskConfig{Command: "echo build-a", Inputs: []string{"packages/a/*.txt"}},
+		TaskConfig: config.TaskConfig{Command: "echo build-a", Inputs: []string{"*.txt"}},
 		Package: &Package{
 			Name: "pkg-a",
-			Path: "packages/a",
+			Path: packageAPath,
 		},
 	}
 
 	taskB := &TaskNode{
 		ID:         "packages/b#build",
 		TaskName:   "build",
-		TaskConfig: config.TaskConfig{Command: "echo build-b", Inputs: []string{"packages/b/*.txt"}},
+		TaskConfig: config.TaskConfig{Command: "echo build-b", Inputs: []string{"*.txt"}},
 		Package: &Package{
 			Name: "pkg-b",
-			Path: "packages/b",
+			Path: packageBPath,
 		},
 		Dependencies: []*TaskNode{taskA},
 	}

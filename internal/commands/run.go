@@ -507,7 +507,11 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 
 	logCacheMissExecuting(e.out, taskCfg.Command)
 	execStart := time.Now()
-	exitCode, execErr := engine.Execute(taskCfg)
+	packagePath := ""
+	if task.Package != nil {
+		packagePath = task.Package.Path
+	}
+	exitCode, execErr := engine.Execute(taskCfg, packagePath)
 	execDuration := time.Since(execStart)
 	if execErr != nil {
 		logCacheFailure(e.errOut, taskCfg.Command, exitCode, execErr)

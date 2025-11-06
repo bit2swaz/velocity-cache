@@ -20,8 +20,8 @@ import (
 )
 
 // GenerateCacheKey returns a deterministic cache key for the supplied script config.
-func GenerateCacheKey(cfg config.TaskConfig, depCacheKeys []string) (string, error) {
-	localHash, err := computeLocalHash(cfg)
+func GenerateCacheKey(cfg config.TaskConfig, depCacheKeys []string, packagePath string) (string, error) {
+	localHash, err := computeLocalHash(cfg, packagePath)
 	if err != nil {
 		return "", err
 	}
@@ -38,7 +38,7 @@ func GenerateCacheKey(cfg config.TaskConfig, depCacheKeys []string) (string, err
 	return hashString(strings.Join(parts, "|")), nil
 }
 
-func computeLocalHash(cfg config.TaskConfig) (string, error) {
+func computeLocalHash(cfg config.TaskConfig, packagePath string) (string, error) {
 	var envHash string
 	if len(cfg.EnvKeys) > 0 {
 		envPairs := make([]string, 0, len(cfg.EnvKeys))
@@ -51,7 +51,7 @@ func computeLocalHash(cfg config.TaskConfig) (string, error) {
 
 	commandHash := hashString(cfg.Command)
 
-	files, err := collectInputFiles(cfg.Inputs)
+	files, err := collectInputFiles(cfg.Inputs, packagePath)
 	if err != nil {
 		return "", err
 	}
@@ -86,9 +86,26 @@ func computeLocalHash(cfg config.TaskConfig) (string, error) {
 	return strings.Join(parts, "|"), nil
 }
 
-func collectInputFiles(patterns []string) ([]string, error) {
+func collectInputFiles(patterns []string, packagePath string) ([]string, error) {
 	if len(patterns) == 0 {
 		return nil, nil
+	}
+
+	originalWd := ""
+	if packagePath != "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("getwd: %w", err)
+		}
+		if err := os.Chdir(packagePath); err != nil {
+			return nil, fmt.Errorf("chdir to %s: %w", packagePath, err)
+		}
+		originalWd = wd
+		defer func() {
+			if originalWd != "" {
+				_ = os.Chdir(originalWd)
+			}
+		}()
 	}
 
 	matcher, err := loadGitignore()
@@ -110,30 +127,35 @@ func collectInputFiles(patterns []string) ([]string, error) {
 		}
 
 		for _, match := range matches {
-			cleaned := filepath.Clean(match)
+			relativePath := filepath.Clean(match)
 
-			info, err := os.Stat(cleaned)
+			info, err := os.Stat(relativePath)
 			if err != nil {
 				if errors.Is(err, os.ErrNotExist) {
 					continue
 				}
-				return nil, fmt.Errorf("stat %q: %w", cleaned, err)
+				return nil, fmt.Errorf("stat %q: %w", relativePath, err)
 			}
 
 			if info.IsDir() {
 				continue
 			}
 
-			if matcher != nil && matcher.MatchesPath(cleaned) {
+			if matcher != nil && matcher.MatchesPath(relativePath) {
 				continue
 			}
 
-			if _, ok := seen[cleaned]; ok {
+			resolvedPath := relativePath
+			if packagePath != "" && !filepath.IsAbs(resolvedPath) {
+				resolvedPath = filepath.Clean(filepath.Join(packagePath, resolvedPath))
+			}
+
+			if _, ok := seen[resolvedPath]; ok {
 				continue
 			}
 
-			seen[cleaned] = struct{}{}
-			files = append(files, cleaned)
+			seen[resolvedPath] = struct{}{}
+			files = append(files, resolvedPath)
 		}
 	}
 
@@ -247,7 +269,12 @@ func GenerateTaskNodeCacheKey(node *TaskNode, depCacheKeys []string) (string, er
 		return "", fmt.Errorf("task node is nil")
 	}
 
-	baseKey, err := GenerateCacheKey(node.TaskConfig, depCacheKeys)
+	packagePath := ""
+	if node.Package != nil {
+		packagePath = node.Package.Path
+	}
+
+	baseKey, err := GenerateCacheKey(node.TaskConfig, depCacheKeys, packagePath)
 	if err != nil {
 		return "", err
 	}

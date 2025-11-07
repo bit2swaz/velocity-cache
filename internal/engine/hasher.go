@@ -20,7 +20,25 @@ import (
 )
 
 // GenerateCacheKey returns a deterministic cache key for the supplied script config.
-func GenerateCacheKey(cfg config.ScriptConfig) (string, error) {
+func GenerateCacheKey(cfg config.TaskConfig, depCacheKeys []string, packagePath string) (string, error) {
+	localHash, err := computeLocalHash(cfg, packagePath)
+	if err != nil {
+		return "", err
+	}
+
+	parts := []string{localHash}
+	if len(depCacheKeys) > 0 {
+		sorted := make([]string, len(depCacheKeys))
+		copy(sorted, depCacheKeys)
+		sort.Strings(sorted)
+		depString := strings.Join(sorted, "|")
+		parts = append(parts, depString)
+	}
+
+	return hashString(strings.Join(parts, "|")), nil
+}
+
+func computeLocalHash(cfg config.TaskConfig, packagePath string) (string, error) {
 	var envHash string
 	if len(cfg.EnvKeys) > 0 {
 		envPairs := make([]string, 0, len(cfg.EnvKeys))
@@ -33,7 +51,7 @@ func GenerateCacheKey(cfg config.ScriptConfig) (string, error) {
 
 	commandHash := hashString(cfg.Command)
 
-	files, err := collectInputFiles(cfg.Inputs)
+	files, err := collectInputFiles(cfg.Inputs, packagePath)
 	if err != nil {
 		return "", err
 	}
@@ -65,14 +83,29 @@ func GenerateCacheKey(cfg config.ScriptConfig) (string, error) {
 		parts = append(parts, "files:"+filesHash)
 	}
 
-	finalString := strings.Join(parts, "|")
-
-	return hashString(finalString), nil
+	return strings.Join(parts, "|"), nil
 }
 
-func collectInputFiles(patterns []string) ([]string, error) {
+func collectInputFiles(patterns []string, packagePath string) ([]string, error) {
 	if len(patterns) == 0 {
 		return nil, nil
+	}
+
+	originalWd := ""
+	if packagePath != "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("getwd: %w", err)
+		}
+		if err := os.Chdir(packagePath); err != nil {
+			return nil, fmt.Errorf("chdir to %s: %w", packagePath, err)
+		}
+		originalWd = wd
+		defer func() {
+			if originalWd != "" {
+				_ = os.Chdir(originalWd)
+			}
+		}()
 	}
 
 	matcher, err := loadGitignore()
@@ -94,30 +127,35 @@ func collectInputFiles(patterns []string) ([]string, error) {
 		}
 
 		for _, match := range matches {
-			cleaned := filepath.Clean(match)
+			relativePath := filepath.Clean(match)
 
-			info, err := os.Stat(cleaned)
+			info, err := os.Stat(relativePath)
 			if err != nil {
 				if errors.Is(err, os.ErrNotExist) {
 					continue
 				}
-				return nil, fmt.Errorf("stat %q: %w", cleaned, err)
+				return nil, fmt.Errorf("stat %q: %w", relativePath, err)
 			}
 
 			if info.IsDir() {
 				continue
 			}
 
-			if matcher != nil && matcher.MatchesPath(cleaned) {
+			if matcher != nil && matcher.MatchesPath(relativePath) {
 				continue
 			}
 
-			if _, ok := seen[cleaned]; ok {
+			resolvedPath := relativePath
+			if packagePath != "" && !filepath.IsAbs(resolvedPath) {
+				resolvedPath = filepath.Clean(filepath.Join(packagePath, resolvedPath))
+			}
+
+			if _, ok := seen[resolvedPath]; ok {
 				continue
 			}
 
-			seen[cleaned] = struct{}{}
-			files = append(files, cleaned)
+			seen[resolvedPath] = struct{}{}
+			files = append(files, resolvedPath)
 		}
 	}
 
@@ -220,4 +258,38 @@ func hashFile(path string) (string, error) {
 func hashString(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
+}
+
+// GenerateTaskNodeCacheKey produces a cache key that is unique to a task node,
+// incorporating both the task configuration hash and the task's identity
+// (package path + task name). This prevents collisions when multiple packages
+// share identical task definitions.
+func GenerateTaskNodeCacheKey(node *TaskNode, depCacheKeys []string) (string, error) {
+	if node == nil {
+		return "", fmt.Errorf("task node is nil")
+	}
+
+	packagePath := ""
+	if node.Package != nil {
+		packagePath = node.Package.Path
+	}
+
+	baseKey, err := GenerateCacheKey(node.TaskConfig, depCacheKeys, packagePath)
+	if err != nil {
+		return "", err
+	}
+
+	identifier := node.ID
+	if strings.TrimSpace(identifier) == "" {
+		if node.Package != nil && node.Package.Path != "" && node.TaskName != "" {
+			identifier = fmt.Sprintf("%s#%s", node.Package.Path, node.TaskName)
+		} else if node.TaskName != "" {
+			identifier = node.TaskName
+		} else {
+			return "", fmt.Errorf("task node missing identifier")
+		}
+	}
+
+	combined := identifier + ":" + baseKey
+	return hashString("task:" + combined), nil
 }

@@ -4,9 +4,41 @@
     "bucket": "velocity-cache-mvp-public",
     "region": "us-east-1"
   },
-  "scripts": {
+  "packages": [
+    "packages/app",
+    "packages/api"
+  ],
+  "tasks": {
+    "prepare": {
+      "command": "npm install",
+      "dependsOn": [],
+      "inputs": [
+        "package.json",
+        "package-lock.json"
+      ],
+      "outputs": [
+        "node_modules/"
+      ],
+      "env_keys": []
+    },
+    "lint": {
+      "command": "npm run lint",
+      "dependsOn": [
+        "prepare"
+      ],
+      "inputs": [
+        "src/**/*",
+        "packages/app/**/*",
+        "packages/api/**/*"
+      ],
+      "outputs": [],
+      "env_keys": []
+    },
     "build": {
       "command": "npm run build",
+      "dependsOn": [
+        "lint"
+      ],
       "inputs": [
         "app/**/*",
         "src/**/*",

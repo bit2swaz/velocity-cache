@@ -15,14 +15,31 @@ import (
 
 // Execute runs the script command defined in cfg and streams output directly to the caller's terminal.
 // It returns the command's exit code along with any execution error.
-func Execute(cfg config.ScriptConfig) (int, error) {
-	return executeWithWriters(cfg, os.Stdout, os.Stderr)
+func Execute(cfg config.TaskConfig, packagePath string) (int, error) {
+	return executeWithWriters(cfg, packagePath, os.Stdout, os.Stderr)
 }
 
-func executeWithWriters(cfg config.ScriptConfig, stdout, stderr io.Writer) (int, error) {
+func executeWithWriters(cfg config.TaskConfig, packagePath string, stdout, stderr io.Writer) (int, error) {
 	command := strings.TrimSpace(cfg.Command)
 	if command == "" {
 		return -1, errors.New("command is empty")
+	}
+
+	originalWd := ""
+	if strings.TrimSpace(packagePath) != "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return -1, fmt.Errorf("getwd: %w", err)
+		}
+		if err := os.Chdir(packagePath); err != nil {
+			return -1, fmt.Errorf("chdir to %s: %w", packagePath, err)
+		}
+		originalWd = wd
+		defer func() {
+			if originalWd != "" {
+				_ = os.Chdir(originalWd)
+			}
+		}()
 	}
 
 	shell := defaultShell()

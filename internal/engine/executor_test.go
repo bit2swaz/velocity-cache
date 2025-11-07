@@ -30,12 +30,12 @@ func main() {
 	progPath := filepath.Join(tmpDir, "main.go")
 	require.NoError(t, os.WriteFile(progPath, []byte(script), 0o644))
 
-	cfg := config.ScriptConfig{Command: "go run " + progPath}
+	cfg := config.TaskConfig{Command: "go run " + progPath}
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	code, err := executeWithWriters(cfg, &stdout, &stderr)
+	code, err := executeWithWriters(cfg, tmpDir, &stdout, &stderr)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, code)
 	assert.Contains(t, stdout.String(), "stdout message")
@@ -43,12 +43,12 @@ func main() {
 }
 
 func TestExecuteFailure(t *testing.T) {
-	cfg := config.ScriptConfig{Command: "sh -c 'echo fail >&2; exit 1'"}
+	cfg := config.TaskConfig{Command: "sh -c 'echo fail >&2; exit 1'"}
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	code, err := executeWithWriters(cfg, &stdout, &stderr)
+	code, err := executeWithWriters(cfg, t.TempDir(), &stdout, &stderr)
 	assert.Error(t, err)
 	assert.NotEqual(t, 0, code)
 	assert.Contains(t, stderr.String(), "fail")

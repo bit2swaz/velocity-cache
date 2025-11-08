@@ -1,6 +1,6 @@
 {
   "name": "velocity-cache",
-  "version": "1.0.1",
+  "version": "2.0.1",
   "description": "A blazing-fast, open-source distributed build cache. Built in Go.",
   "author": "Aditya Mishra (bit2swaz)",
   "license": "MIT",
@@ -12,6 +12,7 @@
     "velocity-cache": "./cli.js"
   },
   "scripts": {
+    "prepack": "node ./scripts/check-no-workspace.js",
     "postinstall": "node install.js"
   },
   "files": [

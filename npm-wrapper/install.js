@@ -5,8 +5,10 @@ const decompress = require('decompress');
 const { rimraf } = require('rimraf');
 const fs = require('fs');
 
+const { version } = require('./package.json');
+
 // --- Configuration ---
-const VERSION = 'v1.0.1'; // Make sure this matches your GitHub release tag!
+const VERSION = `v${version}`; // Must match the GitHub release tag
 const REPO_URL = 'bit2swaz/velocity-cache';
 // --- End Configuration ---
 

@@ -13,7 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-import { generateApiToken } from "@/src/app/(dashboard)/settings/actions";
+import { generateApiToken } from "@/app/(dashboard)/settings/actions";
 
 export default function GenerateTokenButton() {
   const [note, setNote] = useState("");

@@ -3,6 +3,7 @@ import { Webhook } from 'svix';
 import { headers } from 'next/headers';
 import { WebhookEvent } from '@clerk/nextjs/server';
 import { PrismaClient } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { NextResponse } from 'next/server';
 
 const prisma = new PrismaClient();
@@ -63,7 +64,7 @@ export async function POST(req: Request) {
 
     try {
       // Use a Prisma transaction to create the User, Org, and OrgMember
-      await prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         // Create the user
         const newUser = await tx.user.create({
           data: {

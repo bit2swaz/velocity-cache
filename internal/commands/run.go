@@ -291,10 +291,6 @@ func newEngine(ctx context.Context, cfg *config.Config, out, errOut io.Writer) (
 				return nil, fmt.Errorf("create remote cache client: %w", err)
 			}
 			exec.s3Client = client
-		} else {
-			exec.usePublicCache = true
-			logInfo(out, "No S3/R2 credentials detected. Falling back to the community cache service.")
-			logWarning(errOut, "Artifacts upload anonymously. Set S3/R2 environment variables to use a private cache.")
 		}
 	}
 

@@ -1,0 +1,23 @@
+{
+  "remote_cache": {
+    "enabled": false,
+    "bucket": "",
+    "region": ""
+  },
+  "packages": null,
+  "tasks": {
+    "build": {
+      "command": "go build -o bin/velocity-cache ./cmd/...",
+      "dependsOn": null,
+      "inputs": [
+        "**/*.go",
+        "go.mod",
+        "go.sum"
+      ],
+      "outputs": [
+        "bin/"
+      ],
+      "env_keys": null
+    }
+  }
+}

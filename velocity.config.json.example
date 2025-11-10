@@ -1,8 +1,8 @@
 {
   "remote_cache": {
-    "enabled": true,
-    "bucket": "velocity-cache-mvp-public-1",
-    "region": "us-east-1"
+    "enabled": false,
+    "bucket": "",
+    "region": ""
   },
   "scripts": {
     "build": {

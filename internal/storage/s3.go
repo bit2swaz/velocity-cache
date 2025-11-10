@@ -272,3 +272,49 @@ func (c *S3Client) GenerateUploadURL(ctx context.Context, cacheKey string, expir
 
 	return result.URL, nil
 }
+
+// GeneratePresignedUploadURL returns a pre-signed PUT URL for the provided object key.
+func (c *S3Client) GeneratePresignedUploadURL(objectKey string, expiry time.Duration) (string, error) {
+	if strings.TrimSpace(objectKey) == "" {
+		return "", errors.New("object key is empty")
+	}
+	if expiry <= 0 {
+		return "", errors.New("expiry must be positive")
+	}
+
+	presignClient := s3.NewPresignClient(c.client)
+	input := &s3.PutObjectInput{
+		Bucket: &c.bucketName,
+		Key:    &objectKey,
+	}
+
+	presignedReq, err := presignClient.PresignPutObject(context.Background(), input, s3.WithPresignExpires(expiry))
+	if err != nil {
+		return "", fmt.Errorf("presign put object %s: %w", objectKey, err)
+	}
+
+	return presignedReq.URL, nil
+}
+
+// GeneratePresignedDownloadURL returns a pre-signed GET URL for the provided object key.
+func (c *S3Client) GeneratePresignedDownloadURL(objectKey string, expiry time.Duration) (string, error) {
+	if strings.TrimSpace(objectKey) == "" {
+		return "", errors.New("object key is empty")
+	}
+	if expiry <= 0 {
+		return "", errors.New("expiry must be positive")
+	}
+
+	presignClient := s3.NewPresignClient(c.client)
+	input := &s3.GetObjectInput{
+		Bucket: &c.bucketName,
+		Key:    &objectKey,
+	}
+
+	presignedReq, err := presignClient.PresignGetObject(context.Background(), input, s3.WithPresignExpires(expiry))
+	if err != nil {
+		return "", fmt.Errorf("presign get object %s: %w", objectKey, err)
+	}
+
+	return presignedReq.URL, nil
+}

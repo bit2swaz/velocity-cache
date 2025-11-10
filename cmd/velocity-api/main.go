@@ -13,6 +13,7 @@ import (
 
 	"github.com/bit2swaz/velocity-cache/internal/api"
 	"github.com/bit2swaz/velocity-cache/internal/api/ratelimit"
+	"github.com/bit2swaz/velocity-cache/internal/database"
 	"github.com/bit2swaz/velocity-cache/internal/storage"
 )
 
@@ -32,6 +33,12 @@ func main() {
 		log.Fatalf("failed to create s3 client: %v", err)
 	}
 
+	dbPool, err := database.ConnectDB()
+	if err != nil {
+		log.Fatalf("failed to connect to database: %v", err)
+	}
+	defer dbPool.Close()
+
 	uploadLimit := parseEnvInt("VELOCITY_UPLOAD_LIMIT_PER_HOUR", 100)
 	var limiter *ratelimit.Limiter
 	if uploadLimit > 0 {
@@ -45,7 +52,7 @@ func main() {
 		}
 	}
 
-	apiServer := api.NewServer(s3Client, limiter, presignExpiry)
+	apiServer := api.NewServer(dbPool, s3Client, limiter, presignExpiry)
 
 	srv := &http.Server{
 		Addr:              ":" + port,

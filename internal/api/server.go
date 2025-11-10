@@ -2,8 +2,11 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -11,35 +14,55 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/bit2swaz/velocity-cache/internal/api/ratelimit"
 	"github.com/bit2swaz/velocity-cache/internal/storage"
 )
 
 // Server exposes HTTP handlers for cache operations.
 type Server struct {
-	s3Client       *storage.S3Client
-	uploadLimiter  *ratelimit.Limiter
-	downloadExpiry time.Duration
-	uploadExpiry   time.Duration
-	mux            *http.ServeMux
+	db            *pgxpool.Pool
+	s3Client      *storage.S3Client
+	uploadLimiter *ratelimit.Limiter
+	presignExpiry time.Duration
+	router        chi.Router
 }
 
 // NewServer constructs a new Server instance.
-func NewServer(s3Client *storage.S3Client, uploadLimiter *ratelimit.Limiter, presignExpiry time.Duration) *Server {
+func NewServer(db *pgxpool.Pool, s3Client *storage.S3Client, uploadLimiter *ratelimit.Limiter, presignExpiry time.Duration) *Server {
 	if presignExpiry <= 0 {
 		presignExpiry = 5 * time.Minute
 	}
 
 	srv := &Server{
-		s3Client:       s3Client,
-		uploadLimiter:  uploadLimiter,
-		downloadExpiry: presignExpiry,
-		uploadExpiry:   presignExpiry,
-		mux:            http.NewServeMux(),
+		db:            db,
+		s3Client:      s3Client,
+		uploadLimiter: uploadLimiter,
+		presignExpiry: presignExpiry,
 	}
 
-	srv.mux.HandleFunc("/api/v1/cache/download", srv.wrap(srv.handleDownload))
-	srv.mux.HandleFunc("/api/v1/cache/upload", srv.wrap(srv.handleUpload))
+	router := chi.NewRouter()
+	router.Use(middleware.Logger)
+	router.Use(middleware.Recoverer)
+
+	router.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	router.Route("/api/v1", func(r chi.Router) {
+		r.Route("/cache", func(r chi.Router) {
+			r.Use(srv.AuthMiddleware)
+			r.Post("/upload", srv.HandleUpload)
+			r.Get("/download", srv.HandleDownload)
+		})
+	})
+
+	srv.router = router
 
 	if uploadLimiter != nil {
 		go srv.startLimiterJanitor(uploadLimiter, 5*time.Minute)
@@ -48,62 +71,67 @@ func NewServer(s3Client *storage.S3Client, uploadLimiter *ratelimit.Limiter, pre
 	return srv
 }
 
+type contextKey string
+
+const UserIDKey contextKey = "user_id"
+
+// AuthMiddleware validates bearer tokens against stored API keys.
+func (s *Server) AuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+		if token == "" {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		hash := sha256.Sum256([]byte(token))
+		tokenHash := hex.EncodeToString(hash[:])
+
+		var userID string
+		if err := s.db.QueryRow(context.Background(), "SELECT user_id FROM ApiToken WHERE token_hash = $1", tokenHash).Scan(&userID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+			log.Printf("ERROR: auth lookup failed: %v", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), UserIDKey, userID)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 // Handler returns the root HTTP handler.
 func (s *Server) Handler() http.Handler {
-	return s.mux
+	return s.router
 }
 
-type presignResponse struct {
-	URL              string `json:"url"`
-	ExpiresInSeconds int    `json:"expires_in_seconds"`
-}
-
-type errorResponse struct {
-	Error string `json:"error"`
-}
-
-func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) error {
-	if r.Method != http.MethodGet {
-		return methodNotAllowedError{allow: http.MethodGet}
-	}
-
-	cacheKey := strings.TrimSpace(r.URL.Query().Get("key"))
-	if cacheKey == "" {
-		return clientError{msg: "missing required query param: key", code: http.StatusBadRequest}
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	exists, err := s.s3Client.CheckRemote(ctx, cacheKey)
-	if err != nil {
-		return serverError{err: err}
-	}
-
-	if !exists {
-		return clientError{msg: "cache key not found", code: http.StatusNotFound}
-	}
-
-	url, err := s.s3Client.GenerateDownloadURL(ctx, cacheKey, s.downloadExpiry)
-	if err != nil {
-		return serverError{err: err}
-	}
-
-	respondJSON(w, http.StatusOK, presignResponse{
-		URL:              url,
-		ExpiresInSeconds: int(s.downloadExpiry.Seconds()),
-	})
-	return nil
-}
-
-func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) error {
+func (s *Server) HandleUpload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		return methodNotAllowedError{allow: http.MethodPost}
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
 
-	cacheKey := strings.TrimSpace(r.URL.Query().Get("key"))
-	if cacheKey == "" {
-		return clientError{msg: "missing required query param: key", code: http.StatusBadRequest}
+	userId := r.Context().Value(UserIDKey).(string)
+	key := strings.TrimSpace(r.URL.Query().Get("key"))
+	projectId := strings.TrimSpace(r.URL.Query().Get("projectId"))
+
+	if key == "" {
+		http.Error(w, "missing required query param: key", http.StatusBadRequest)
+		return
+	}
+	if projectId == "" {
+		http.Error(w, "missing required query param: projectId", http.StatusBadRequest)
+		return
 	}
 
 	if s.uploadLimiter != nil {
@@ -112,54 +140,81 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) error {
 			if retryAfter > 0 {
 				w.Header().Set("Retry-After", formatRetryAfter(retryAfter))
 			}
-			return clientError{msg: "rate limit exceeded", code: http.StatusTooManyRequests}
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	url, err := s.s3Client.GenerateUploadURL(ctx, cacheKey, s.uploadExpiry)
+	var orgId string
+	err := s.db.QueryRow(r.Context(), "SELECT T1.org_id FROM Project AS T1 JOIN OrgMember AS T2 ON T1.org_id = T2.org_id WHERE T1.id = $1 AND T2.user_id = $2", projectId, userId).Scan(&orgId)
+	if errors.Is(err, pgx.ErrNoRows) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	if err != nil {
-		return serverError{err: err}
+		log.Printf("ERROR: authorize upload user %s project %s: %v", userId, projectId, err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
 	}
 
-	respondJSON(w, http.StatusOK, presignResponse{
-		URL:              url,
-		ExpiresInSeconds: int(s.uploadExpiry.Seconds()),
-	})
-	return nil
+	// TODO: Implement quota check here.
+
+	objectKey := fmt.Sprintf("%s/%s/%s.zip", orgId, projectId, key)
+
+	url, err := s.s3Client.GeneratePresignedUploadURL(objectKey, s.presignExpiry)
+	if err != nil {
+		log.Printf("ERROR: generate upload URL for %s: %v", objectKey, err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"url": url})
 }
 
-// wrap converts a handler that returns an error into a standard http.HandlerFunc.
-func (s *Server) wrap(fn func(http.ResponseWriter, *http.Request) error) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if err := fn(w, r); err != nil {
-			s.handleError(w, r, err)
-		}
+func (s *Server) HandleDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
-}
 
-func (s *Server) handleError(w http.ResponseWriter, r *http.Request, err error) {
-	var mErr methodNotAllowedError
-	var cErr clientError
-	var sErr serverError
+	userId := r.Context().Value(UserIDKey).(string)
+	key := strings.TrimSpace(r.URL.Query().Get("key"))
+	projectId := strings.TrimSpace(r.URL.Query().Get("projectId"))
 
-	switch {
-	case errors.As(err, &mErr):
-		if mErr.allow != "" {
-			w.Header().Set("Allow", mErr.allow)
-		}
-		respondJSON(w, http.StatusMethodNotAllowed, errorResponse{Error: "method not allowed"})
-	case errors.As(err, &cErr):
-		respondJSON(w, cErr.code, errorResponse{Error: cErr.msg})
-	case errors.As(err, &sErr):
-		log.Printf("ERROR: %v", sErr.err)
-		respondJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
-	default:
-		log.Printf("ERROR: %v", err)
-		respondJSON(w, http.StatusInternalServerError, errorResponse{Error: "internal server error"})
+	if key == "" {
+		http.Error(w, "missing required query param: key", http.StatusBadRequest)
+		return
 	}
+	if projectId == "" {
+		http.Error(w, "missing required query param: projectId", http.StatusBadRequest)
+		return
+	}
+
+	var orgId string
+	err := s.db.QueryRow(r.Context(), "SELECT T1.org_id FROM Project AS T1 JOIN OrgMember AS T2 ON T1.org_id = T2.org_id WHERE T1.id = $1 AND T2.user_id = $2", projectId, userId).Scan(&orgId)
+	if errors.Is(err, pgx.ErrNoRows) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err != nil {
+		log.Printf("ERROR: authorize download user %s project %s: %v", userId, projectId, err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// TODO: Implement quota check here.
+
+	objectKey := fmt.Sprintf("%s/%s/%s.zip", orgId, projectId, key)
+
+	url, err := s.s3Client.GeneratePresignedDownloadURL(objectKey, s.presignExpiry)
+	if err != nil {
+		log.Printf("ERROR: generate download URL for %s: %v", objectKey, err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"url": url})
 }
 
 func respondJSON(w http.ResponseWriter, status int, payload any) {

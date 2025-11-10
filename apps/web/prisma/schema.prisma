@@ -1,0 +1,78 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// Synced from Clerk via Webhooks
+model User {
+  id    String @id // Clerk User ID
+  email String @unique
+  name  String?
+
+  orgMemberships OrgMember[]
+  apiTokens      ApiToken[]
+}
+
+model Organization {
+  id   String @id @default(cuid())
+  name String
+  plan String @default("free") // For billing
+
+  members  OrgMember[]
+  projects Project[]
+}
+
+// Join table for users and orgs
+model OrgMember {
+  id   String @id @default(cuid())
+  role String // "OWNER" or "MEMBER"
+
+  orgId  String
+  userId String
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, userId])
+}
+
+model Project {
+  id   String @id @default(cuid()) // This is the 'project_id' for the CLI
+  name String
+
+  orgId        String
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  cacheEvents  CacheEvent[]
+}
+
+// For the CLI auth
+model ApiToken {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique // We ONLY store the hash
+  note      String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+}
+
+// For analytics
+model CacheEvent {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  status    String   // "HIT" or "MISS"
+  hash      String
+  size      Int?     // bytes
+  duration  Int?     // ms
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}

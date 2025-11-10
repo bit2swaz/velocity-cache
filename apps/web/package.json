@@ -17,6 +17,7 @@
     "next": "16.0.1",
     "react": "19.2.0",
     "react-dom": "19.2.0",
+    "svix": "^1.81.0",
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {

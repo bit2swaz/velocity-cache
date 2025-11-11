@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/bit2swaz/velocity-cache/internal/api"
 	"github.com/bit2swaz/velocity-cache/internal/api/ratelimit"
 	"github.com/bit2swaz/velocity-cache/internal/database"
@@ -52,11 +54,24 @@ func main() {
 		}
 	}
 
+	appState := &api.AppState{DB: dbPool}
+
 	apiServer := api.NewServer(dbPool, s3Client, limiter, presignExpiry)
+	handler := apiServer.Handler()
+
+	router, ok := handler.(chi.Router)
+	if !ok {
+		log.Fatalf("api handler does not implement chi.Router")
+	}
+
+	router.Route("/api/v1/cache", func(r chi.Router) {
+		r.Use(apiServer.AuthMiddleware)
+		r.Post("/event", api.HandleCacheEvent(appState))
+	})
 
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           apiServer.Handler(),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,

@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -406,6 +407,7 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 			return "", err
 		}
 		logCacheHit(e.out, "local", time.Since(start), savedDuration, hasSavedDuration)
+		go reportCacheEvent(e, task, "HIT", 0, time.Since(start))
 		task.State = 2
 		return cacheKey, nil
 	}
@@ -456,6 +458,7 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 				}
 
 				logCacheHit(e.out, "remote", time.Since(start), savedDuration, hasSavedDuration)
+				go reportCacheEvent(e, task, "HIT", 0, time.Since(start))
 				task.State = 2
 				return cacheKey, nil
 			}
@@ -508,6 +511,7 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 				}
 
 				logCacheHit(e.out, "remote", time.Since(start), savedDuration, hasSavedDuration)
+				go reportCacheEvent(e, task, "HIT", 0, time.Since(start))
 				task.State = 2
 				return cacheKey, nil
 			}
@@ -549,6 +553,13 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 		err = fmt.Errorf("save cache locally for %s: %w", task.ID, err)
 		task.LastError = err
 		return "", err
+	}
+
+	fileInfo, err := os.Stat(localZip)
+	if err != nil {
+		logWarning(e.errOut, fmt.Sprintf("failed to stat cache artifact: %v", err))
+	} else {
+		go reportCacheEvent(e, task, "MISS", int(fileInfo.Size()), execDuration)
 	}
 
 	if err := storeCacheMetadata(cacheKey, taskCfg.Command, execDuration); err != nil {
@@ -797,6 +808,63 @@ func loadCacheDuration(cacheKey string) (time.Duration, bool) {
 		return 0, false
 	}
 	return time.Duration(meta.DurationMillis) * time.Millisecond, true
+}
+
+func reportCacheEvent(e *Engine, task *engine.TaskNode, status string, size int, duration time.Duration) {
+	go func() {
+		if e == nil || !e.useSaaS {
+			return
+		}
+		if task == nil || strings.TrimSpace(task.CacheKey) == "" {
+			return
+		}
+		if strings.TrimSpace(e.projectId) == "" || strings.TrimSpace(e.apiToken) == "" {
+			return
+		}
+		if e.httpClient == nil {
+			return
+		}
+
+		payload := map[string]any{
+			"projectId": e.projectId,
+			"hash":      task.CacheKey,
+			"status":    status,
+			"size":      size,
+			"duration":  int(duration.Milliseconds()),
+		}
+
+		body, err := json.Marshal(payload)
+		if err != nil {
+			logAsyncFailure(e.errOut, fmt.Errorf("marshal cache event: %w", err))
+			return
+		}
+
+		ctx := e.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.publicAPIBase+"/api/v1/cache/event", bytes.NewReader(body))
+		if err != nil {
+			logAsyncFailure(e.errOut, fmt.Errorf("create cache event request: %w", err))
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+e.apiToken)
+
+		resp, err := e.httpClient.Do(req)
+		if err != nil {
+			logAsyncFailure(e.errOut, fmt.Errorf("cache event request failed: %w", err))
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+			logAsyncFailure(e.errOut, fmt.Errorf("cache event status %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
+			return
+		}
+	}()
 }
 
 func storeCacheMetadata(cacheKey, command string, duration time.Duration) error {

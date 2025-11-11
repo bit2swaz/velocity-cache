@@ -9,20 +9,21 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.19.14
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.88.6
 	github.com/bmatcuk/doublestar/v4 v4.3.0
+	github.com/go-chi/chi/v5 v5.2.3
+	github.com/jackc/pgx/v5 v5.7.6
+	github.com/lucsky/cuid v1.0.2
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
+	golang.org/x/term v0.36.0
 )
 
 require (
-	github.com/go-chi/chi/v5 v5.2.3 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/pgx/v5 v5.7.6 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	golang.org/x/crypto v0.37.0 // indirect
 	golang.org/x/sync v0.16.0 // indirect
-	golang.org/x/term v0.36.0 // indirect
 )
 
 require (

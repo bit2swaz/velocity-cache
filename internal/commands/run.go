@@ -417,7 +417,7 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 			apiClient := engine.NewSaaSAPIClient(e.publicAPIBase, e.apiToken)
 			apiClient.SetHTTPClient(e.httpClient)
 
-			downloadURL, found, err := apiClient.GetDownloadURL(e.ctx, e.projectId, cacheKey)
+			downloadResp, found, err := apiClient.GetDownloadURL(e.ctx, e.projectId, cacheKey)
 			if err != nil {
 				task.State = 3
 				err = fmt.Errorf("velocity SaaS download for %s: %w", task.ID, err)
@@ -425,6 +425,9 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 				return "", err
 			}
 			if found {
+				if strings.TrimSpace(downloadResp.Warning) != "" {
+					logWarning(e.errOut, downloadResp.Warning)
+				}
 				tempDir, err := os.MkdirTemp("", "velocity-remote-*")
 				if err != nil {
 					task.State = 3
@@ -435,7 +438,7 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 				defer os.RemoveAll(tempDir)
 
 				tempZip := filepath.Join(tempDir, cacheKey+".zip")
-				if err := downloadToFile(e.ctx, apiClient.HTTPClient(), downloadURL, tempZip); err != nil {
+				if err := downloadToFile(e.ctx, apiClient.HTTPClient(), downloadResp.URL, tempZip); err != nil {
 					task.State = 3
 					err = fmt.Errorf("download SaaS cache for %s: %w", task.ID, err)
 					task.LastError = err
@@ -577,22 +580,28 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 			apiClient := engine.NewSaaSAPIClient(e.publicAPIBase, e.apiToken)
 			apiClient.SetHTTPClient(e.httpClient)
 
-			uploadURL, err := apiClient.GetUploadURL(uploadCtx, e.projectId, cacheKey)
+			uploadResp, err := apiClient.GetUploadURL(uploadCtx, e.projectId, cacheKey)
 			if err != nil {
 				logAsyncFailure(e.errOut, err)
-			} else if uploadURL != "" {
-				if err := uploadToPresignedURL(uploadCtx, apiClient.HTTPClient(), uploadURL, localZip); err != nil {
+			} else if uploadResp.URL != "" {
+				if strings.TrimSpace(uploadResp.Warning) != "" {
+					logWarning(e.errOut, uploadResp.Warning)
+				}
+				if err := uploadToPresignedURL(uploadCtx, apiClient.HTTPClient(), uploadResp.URL, localZip); err != nil {
 					logAsyncFailure(e.errOut, err)
 				}
 			}
 
 			if metaPath, err := engine.LocalCacheMetadataPath(cacheKey); err == nil {
 				if metaKey, err := engine.CacheMetadataObjectName(cacheKey); err == nil {
-					metaURL, err := apiClient.GetUploadURL(uploadCtx, e.projectId, metaKey)
+					metaResp, err := apiClient.GetUploadURL(uploadCtx, e.projectId, metaKey)
 					if err != nil {
 						logAsyncFailure(e.errOut, err)
-					} else if metaURL != "" {
-						if err := uploadToPresignedURL(uploadCtx, apiClient.HTTPClient(), metaURL, metaPath); err != nil {
+					} else if metaResp.URL != "" {
+						if strings.TrimSpace(metaResp.Warning) != "" {
+							logWarning(e.errOut, metaResp.Warning)
+						}
+						if err := uploadToPresignedURL(uploadCtx, apiClient.HTTPClient(), metaResp.URL, metaPath); err != nil {
 							logAsyncFailure(e.errOut, err)
 						}
 					}

@@ -18,6 +18,11 @@ type SaaSAPIClient struct {
 	httpClient *http.Client
 }
 
+type PresignResponse struct {
+	URL     string `json:"url"`
+	Warning string `json:"warning,omitempty"`
+}
+
 // NewSaaSAPIClient constructs a new client with the provided API base URL and bearer token.
 func NewSaaSAPIClient(baseURL, token string) *SaaSAPIClient {
 	return &SaaSAPIClient{
@@ -42,15 +47,15 @@ func (c *SaaSAPIClient) HTTPClient() *http.Client {
 }
 
 // GetDownloadURL returns a presigned download URL for the provided cache key.
-func (c *SaaSAPIClient) GetDownloadURL(ctx context.Context, projectID, cacheKey string) (string, bool, error) {
+func (c *SaaSAPIClient) GetDownloadURL(ctx context.Context, projectID, cacheKey string) (PresignResponse, bool, error) {
 	endpoint, err := c.buildURL("/api/v1/cache/download", projectID, cacheKey)
 	if err != nil {
-		return "", false, err
+		return PresignResponse{}, false, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return "", false, err
+		return PresignResponse{}, false, err
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
@@ -58,40 +63,38 @@ func (c *SaaSAPIClient) GetDownloadURL(ctx context.Context, projectID, cacheKey 
 
 	resp, err := c.HTTPClient().Do(req)
 	if err != nil {
-		return "", false, err
+		return PresignResponse{}, false, err
 	}
 	defer resp.Body.Close()
 
 	switch resp.StatusCode {
 	case http.StatusOK:
-		var payload struct {
-			URL string `json:"url"`
-		}
+		var payload PresignResponse
 		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-			return "", false, fmt.Errorf("decode download response: %w", err)
+			return PresignResponse{}, false, fmt.Errorf("decode download response: %w", err)
 		}
 		if payload.URL == "" {
-			return "", false, fmt.Errorf("download response missing url")
+			return PresignResponse{}, false, fmt.Errorf("download response missing url")
 		}
-		return payload.URL, true, nil
+		return payload, true, nil
 	case http.StatusNotFound:
-		return "", false, nil
+		return PresignResponse{}, false, nil
 	default:
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return "", false, fmt.Errorf("download request failed: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return PresignResponse{}, false, fmt.Errorf("download request failed: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 }
 
 // GetUploadURL returns a presigned upload URL for the provided cache key.
-func (c *SaaSAPIClient) GetUploadURL(ctx context.Context, projectID, cacheKey string) (string, error) {
+func (c *SaaSAPIClient) GetUploadURL(ctx context.Context, projectID, cacheKey string) (PresignResponse, error) {
 	endpoint, err := c.buildURL("/api/v1/cache/upload", projectID, cacheKey)
 	if err != nil {
-		return "", err
+		return PresignResponse{}, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
 	if err != nil {
-		return "", err
+		return PresignResponse{}, err
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
@@ -99,26 +102,24 @@ func (c *SaaSAPIClient) GetUploadURL(ctx context.Context, projectID, cacheKey st
 
 	resp, err := c.HTTPClient().Do(req)
 	if err != nil {
-		return "", err
+		return PresignResponse{}, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return "", fmt.Errorf("upload request failed: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return PresignResponse{}, fmt.Errorf("upload request failed: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	var payload struct {
-		URL string `json:"url"`
-	}
+	var payload PresignResponse
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return "", fmt.Errorf("decode upload response: %w", err)
+		return PresignResponse{}, fmt.Errorf("decode upload response: %w", err)
 	}
 	if payload.URL == "" {
-		return "", fmt.Errorf("upload response missing url")
+		return PresignResponse{}, fmt.Errorf("upload response missing url")
 	}
 
-	return payload.URL, nil
+	return payload, nil
 }
 
 func (c *SaaSAPIClient) buildURL(path, projectID, cacheKey string) (string, error) {

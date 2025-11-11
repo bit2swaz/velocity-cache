@@ -13,6 +13,7 @@ const (
 
 // Config is the top-level configuration struct.
 type Config struct {
+	ProjectID   string                `mapstructure:"project_id" json:"project_id,omitempty"`
 	RemoteCache RemoteCacheConfig     `mapstructure:"remote_cache" json:"remote_cache"`
 	Packages    []string              `mapstructure:"packages" json:"packages"`
 	Tasks       map[string]TaskConfig `mapstructure:"tasks" json:"tasks"`

@@ -14,6 +14,7 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newRunCommand())
 	root.AddCommand(newCleanCommand())
 	root.AddCommand(newLoginCommand())
+	root.AddCommand(newLinkCommand())
 
 	return root
 }

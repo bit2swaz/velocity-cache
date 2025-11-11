@@ -3,11 +3,9 @@ package commands
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -18,6 +16,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
+	"github.com/bit2swaz/velocity-cache/internal/auth"
 	"github.com/bit2swaz/velocity-cache/internal/config"
 	"github.com/bit2swaz/velocity-cache/internal/engine"
 	"github.com/bit2swaz/velocity-cache/internal/storage"
@@ -258,20 +257,27 @@ func ExecuteGraph(ctx context.Context, root *engine.TaskNode, cfg *config.Config
 }
 
 type Engine struct {
-	ctx            context.Context
-	cfg            *config.Config
-	out            io.Writer
-	errOut         io.Writer
-	httpClient     *http.Client
-	s3Client       *storage.S3Client
-	usePublicCache bool
-	publicAPIBase  string
+	ctx           context.Context
+	cfg           *config.Config
+	out           io.Writer
+	errOut        io.Writer
+	httpClient    *http.Client
+	s3Client      *storage.S3Client
+	useSaaS       bool
+	apiToken      string
+	projectId     string
+	publicAPIBase string
 }
 
 func newEngine(ctx context.Context, cfg *config.Config, out, errOut io.Writer) (*Engine, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+
+	token, _ := auth.LoadToken()
+	token = strings.TrimSpace(token)
+	projectID := strings.TrimSpace(cfg.ProjectID)
+	hasKeys := strings.TrimSpace(os.Getenv("R2_ACCESS_KEY_ID")) != "" || strings.TrimSpace(os.Getenv("AWS_ACCESS_KEY_ID")) != ""
 
 	exec := &Engine{
 		ctx:           ctx,
@@ -283,14 +289,21 @@ func newEngine(ctx context.Context, cfg *config.Config, out, errOut io.Writer) (
 
 	if cfg.RemoteCache.Enabled {
 		exec.httpClient = &http.Client{Timeout: 30 * time.Second}
-		hasKeys := strings.TrimSpace(os.Getenv("R2_ACCESS_KEY_ID")) != "" || strings.TrimSpace(os.Getenv("AWS_ACCESS_KEY_ID")) != ""
-		if hasKeys {
-			logInfo(out, "Using configured S3/R2 credentials for remote cache...")
+
+		if token != "" && projectID != "" {
+			logInfo(out, "Using VelocityCache SaaS account.")
+			exec.useSaaS = true
+			exec.apiToken = token
+			exec.projectId = projectID
+		} else if hasKeys {
+			logInfo(out, "Using private S3/R2 credentials.")
 			client, err := storage.NewS3Client(ctx, cfg.RemoteCache.Bucket)
 			if err != nil {
 				return nil, fmt.Errorf("create remote cache client: %w", err)
 			}
 			exec.s3Client = client
+		} else {
+			logInfo(out, "No credentials found. Using local cache only.")
 		}
 	}
 
@@ -398,22 +411,18 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 	}
 
 	if e.cfg.RemoteCache.Enabled {
-		if e.usePublicCache {
-			if e.httpClient == nil {
+		if e.useSaaS {
+			apiClient := engine.NewSaaSAPIClient(e.publicAPIBase, e.apiToken)
+			apiClient.SetHTTPClient(e.httpClient)
+
+			downloadURL, found, err := apiClient.GetDownloadURL(e.ctx, e.projectId, cacheKey)
+			if err != nil {
 				task.State = 3
-				err := fmt.Errorf("public cache client unavailable")
+				err = fmt.Errorf("velocity SaaS download for %s: %w", task.ID, err)
 				task.LastError = err
 				return "", err
 			}
-			url, status, err := fetchPublicDownloadURL(e.ctx, e.httpClient, e.publicAPIBase, cacheKey)
-			if err != nil {
-				if !errors.Is(err, errPublicCacheMiss) {
-					task.State = 3
-					err = fmt.Errorf("public cache download for %s: %w", task.ID, err)
-					task.LastError = err
-					return "", err
-				}
-			} else if status == http.StatusOK && url != "" {
+			if found {
 				tempDir, err := os.MkdirTemp("", "velocity-remote-*")
 				if err != nil {
 					task.State = 3
@@ -424,9 +433,9 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 				defer os.RemoveAll(tempDir)
 
 				tempZip := filepath.Join(tempDir, cacheKey+".zip")
-				if err := downloadToFile(e.ctx, e.httpClient, url, tempZip); err != nil {
+				if err := downloadToFile(e.ctx, apiClient.HTTPClient(), downloadURL, tempZip); err != nil {
 					task.State = 3
-					err = fmt.Errorf("download public cache for %s: %w", task.ID, err)
+					err = fmt.Errorf("download SaaS cache for %s: %w", task.ID, err)
 					task.LastError = err
 					return "", err
 				}
@@ -434,14 +443,14 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 				localZip, err := engine.SaveLocal(cacheKey, tempZip)
 				if err != nil {
 					task.State = 3
-					err = fmt.Errorf("save public cache locally for %s: %w", task.ID, err)
+					err = fmt.Errorf("save SaaS cache locally for %s: %w", task.ID, err)
 					task.LastError = err
 					return "", err
 				}
 
 				if err := engine.Extract(localZip, taskCfg.Outputs, packagePath); err != nil {
 					task.State = 3
-					err = fmt.Errorf("extract public cache for %s: %w", task.ID, err)
+					err = fmt.Errorf("extract SaaS cache for %s: %w", task.ID, err)
 					task.LastError = err
 					return "", err
 				}
@@ -549,18 +558,32 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 	}
 
 	if e.cfg.RemoteCache.Enabled {
-		if e.usePublicCache {
+		if e.useSaaS {
 			logCacheMissUpload(e.out)
 			uploadCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 
-			if err := uploadViaPublicAPI(uploadCtx, e.httpClient, e.publicAPIBase, cacheKey, localZip); err != nil {
+			apiClient := engine.NewSaaSAPIClient(e.publicAPIBase, e.apiToken)
+			apiClient.SetHTTPClient(e.httpClient)
+
+			uploadURL, err := apiClient.GetUploadURL(uploadCtx, e.projectId, cacheKey)
+			if err != nil {
 				logAsyncFailure(e.errOut, err)
+			} else if uploadURL != "" {
+				if err := uploadToPresignedURL(uploadCtx, apiClient.HTTPClient(), uploadURL, localZip); err != nil {
+					logAsyncFailure(e.errOut, err)
+				}
 			}
+
 			if metaPath, err := engine.LocalCacheMetadataPath(cacheKey); err == nil {
 				if metaKey, err := engine.CacheMetadataObjectName(cacheKey); err == nil {
-					if err := uploadViaPublicAPI(uploadCtx, e.httpClient, e.publicAPIBase, metaKey, metaPath); err != nil {
+					metaURL, err := apiClient.GetUploadURL(uploadCtx, e.projectId, metaKey)
+					if err != nil {
 						logAsyncFailure(e.errOut, err)
+					} else if metaURL != "" {
+						if err := uploadToPresignedURL(uploadCtx, apiClient.HTTPClient(), metaURL, metaPath); err != nil {
+							logAsyncFailure(e.errOut, err)
+						}
 					}
 				}
 			}
@@ -665,101 +688,11 @@ func logAsyncFailure(errOut io.Writer, err error) {
 
 const defaultPublicAPIBase = "https://velocity-api-2pno.onrender.com"
 
-var errPublicCacheMiss = errors.New("public cache miss")
-
 func publicAPIBaseURL() string {
 	if v := strings.TrimSpace(os.Getenv("VELOCITY_PUBLIC_CACHE_API")); v != "" {
 		return strings.TrimSuffix(v, "/")
 	}
 	return defaultPublicAPIBase
-}
-
-func fetchPublicDownloadURL(ctx context.Context, client *http.Client, base, cacheKey string) (string, int, error) {
-	endpoint, err := buildPublicAPIURL(base, "/api/v1/cache/download", cacheKey)
-	if err != nil {
-		return "", 0, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return "", 0, err
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", 0, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return "", resp.StatusCode, errPublicCacheMiss
-	}
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return "", resp.StatusCode, fmt.Errorf("public cache download: unexpected status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	var payload struct {
-		URL string `json:"url"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return "", resp.StatusCode, fmt.Errorf("decode download response: %w", err)
-	}
-	if payload.URL == "" {
-		return "", resp.StatusCode, fmt.Errorf("download response missing url")
-	}
-	return payload.URL, resp.StatusCode, nil
-}
-
-func uploadViaPublicAPI(ctx context.Context, client *http.Client, base, cacheKey, path string) error {
-	endpoint, err := buildPublicAPIURL(base, "/api/v1/cache/upload", cacheKey)
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
-	if err != nil {
-		return err
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("public cache upload: unexpected status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	var payload struct {
-		URL string `json:"url"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return fmt.Errorf("decode upload response: %w", err)
-	}
-	if payload.URL == "" {
-		return fmt.Errorf("upload response missing url")
-	}
-
-	return uploadToPresignedURL(ctx, client, payload.URL, path)
-}
-
-func buildPublicAPIURL(base, path, cacheKey string) (string, error) {
-	if base == "" {
-		base = defaultPublicAPIBase
-	}
-	base = strings.TrimSuffix(base, "/")
-	full := base + path
-	parsed, err := url.Parse(full)
-	if err != nil {
-		return "", err
-	}
-	q := parsed.Query()
-	q.Set("key", cacheKey)
-	parsed.RawQuery = q.Encode()
-	return parsed.String(), nil
 }
 
 func downloadToFile(ctx context.Context, client *http.Client, fileURL, dest string) error {

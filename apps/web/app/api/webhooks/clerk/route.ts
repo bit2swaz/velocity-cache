@@ -1,19 +1,17 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import { Webhook } from 'svix';
-import { headers } from 'next/headers';
-import { WebhookEvent } from '@clerk/nextjs/server';
-import { PrismaClient } from '@prisma/client';
-import type { Prisma } from '@prisma/client';
-import { NextResponse } from 'next/server';
+import { Webhook } from "svix";
+import { headers } from "next/headers";
+import { WebhookEvent } from "@clerk/nextjs/server";
+import type { Prisma } from "@prisma/client";
 
-const prisma = new PrismaClient();
+import { prisma } from "@/lib/prisma";
 
 export async function POST(req: Request) {
   // You can find this in the Clerk Dashboard -> Webhooks -> choose the webhook
   const WEBHOOK_SECRET = process.env.CLERK_WEBHOOK_SECRET;
 
   if (!WEBHOOK_SECRET) {
-    throw new Error('Please add CLERK_WEBHOOK_SECRET from Clerk Dashboard to .env or .env.local');
+    throw new Error("Please add CLERK_WEBHOOK_SECRET from Clerk Dashboard to .env or .env.local");
   }
 
   // Get the headers
@@ -24,7 +22,7 @@ export async function POST(req: Request) {
 
   // If there are no headers, error out
   if (!svix_id || !svix_timestamp || !svix_signature) {
-    return new Response('Error: No svix headers', { status: 400 });
+    return new Response("Error: No svix headers", { status: 400 });
   }
 
   // Get the body
@@ -43,8 +41,8 @@ export async function POST(req: Request) {
       "svix-signature": svix_signature,
     }) as WebhookEvent;
   } catch (err) {
-    console.error('Error verifying webhook:', err);
-    return new Response('Error verifying webhook', { status: 400 });
+    console.error("Error verifying webhook:", err);
+    return new Response("Error verifying webhook", { status: 400 });
   }
 
   // Get the ID and type
@@ -54,17 +52,17 @@ export async function POST(req: Request) {
   console.log(`Webhook received with type: ${eventType}`);
 
   // --- YOUR SYNC LOGIC ---
-  if (eventType === 'user.created') {
+  if (eventType === "user.created") {
     const { id, email_addresses, first_name, last_name } = evt.data;
     const email = email_addresses[0]?.email_address;
 
     if (!id || !email) {
-      return new Response('Error: Missing user ID or email', { status: 400 });
+      return new Response("Error: Missing user ID or email", { status: 400 });
     }
 
     try {
       // Use a Prisma transaction to create the User, Org, and OrgMember
-  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         // Create the user
         const newUser = await tx.user.create({
           data: {
@@ -78,7 +76,7 @@ export async function POST(req: Request) {
         const newOrg = await tx.organization.create({
           data: {
             name: `${first_name}'s Team`,
-            plan: 'free',
+            plan: "free",
           },
         });
 
@@ -87,7 +85,7 @@ export async function POST(req: Request) {
           data: {
             userId: newUser.id,
             orgId: newOrg.id,
-            role: 'OWNER',
+            role: "OWNER",
           },
         });
       });
@@ -96,17 +94,17 @@ export async function POST(req: Request) {
 
     } catch (e) {
       console.error("Error during user sync transaction:", e);
-      return new Response('Error during user sync', { status: 500 });
+      return new Response("Error during user sync", { status: 500 });
     }
   }
 
-  if (eventType === 'user.updated') {
+  if (eventType === "user.updated") {
     // Handle user updates if needed (e.g., name, email changes)
   }
 
-  if (eventType === 'user.deleted') {
+  if (eventType === "user.deleted") {
     // Handle user deletion (e.g., cascade delete in Prisma schema handles this)
   }
 
-  return new Response('', { status: 200 });
+  return new Response("", { status: 200 });
 }

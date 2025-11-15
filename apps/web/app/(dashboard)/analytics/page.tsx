@@ -1,20 +1,9 @@
 import { auth } from "@clerk/nextjs/server";
-import { Prisma, PrismaClient } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { prisma } from "@/lib/prisma";
 import AnalyticsChart from "./analytics-chart";
-
-const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-
-const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient({
-    log: process.env.NODE_ENV === "development" ? ["query", "error", "warn"] : ["error", "warn"],
-  });
-
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prisma = prisma;
-}
 
 function formatDuration(ms: number): string {
   if (ms <= 0) return "0 ms";

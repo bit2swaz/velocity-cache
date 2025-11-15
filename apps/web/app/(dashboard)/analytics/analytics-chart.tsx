@@ -38,9 +38,10 @@ export default function AnalyticsChart({ rawData }: AnalyticsChartProps) {
       return [];
     }
 
-    const formatter = new Intl.DateTimeFormat(undefined, {
+    const formatter = new Intl.DateTimeFormat("en-US", {
       month: "short",
       day: "numeric",
+      timeZone: "UTC",
     });
 
     const grouped = new Map<string, ProcessedChartRow>();

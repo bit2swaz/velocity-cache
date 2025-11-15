@@ -127,6 +127,7 @@ function ChartTooltipContent({
     labelKey?: string
   }) {
   const { config } = useChart()
+  const numberFormatter = React.useMemo(() => new Intl.NumberFormat("en-US"), [])
 
   const tooltipLabel = React.useMemo(() => {
     if (hideLabel || !payload?.length) {
@@ -236,7 +237,9 @@ function ChartTooltipContent({
                       </div>
                       {item.value && (
                         <span className="text-foreground font-mono font-medium tabular-nums">
-                          {item.value.toLocaleString()}
+                          {typeof item.value === "number"
+                            ? numberFormatter.format(item.value)
+                            : item.value}
                         </span>
                       )}
                     </div>

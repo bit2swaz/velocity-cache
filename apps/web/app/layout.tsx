@@ -1,12 +1,5 @@
 import type { Metadata } from "next";
-import {
-  ClerkProvider,
-  SignInButton,
-  SignUpButton,
-  SignedIn,
-  SignedOut,
-  UserButton,
-} from "@clerk/nextjs";
+import { ClerkProvider } from "@clerk/nextjs";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -36,18 +29,15 @@ export default function RootLayout({
         <body
           className={`${geistSans.variable} ${geistMono.variable} antialiased`}
         >
-          <header className="flex items-center justify-between border-b px-6 py-4">
-            <h1 className="text-lg font-semibold">Velocity Cache Admin</h1>
-            <nav className="flex items-center gap-3">
-              <SignedOut>
+          {/* <header className="flex items-center justify-between border-b px-6 py-4"> */}
+            {/* <SignedOut>
                 <SignInButton mode="modal" />
                 <SignUpButton mode="modal" />
               </SignedOut>
               <SignedIn>
                 <UserButton showName appearance={{ elements: { userButtonBox: "gap-2" } }} />
-              </SignedIn>
-            </nav>
-          </header>
+              </SignedIn> */}
+          {/* </header> */}
           <main>{children}</main>
         </body>
       </html>

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 )
 
-type tokenFile struct {
+type AuthFile struct {
 	Token string `json:"token"`
 }
 
@@ -23,25 +23,24 @@ func tokenFilePath() (string, error) {
 }
 
 func SaveToken(token string) error {
-	filePath, err := tokenFilePath()
+	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(filePath), 0o700); err != nil {
-		return fmt.Errorf("ensure config dir: %w", err)
+	configPath := filepath.Join(configDir, "velocity")
+	if err := os.MkdirAll(configPath, 0o700); err != nil {
+		return err
 	}
 
-	payload, err := json.Marshal(tokenFile{Token: token})
+	filePath := filepath.Join(configPath, "auth.json")
+
+	data, err := json.MarshalIndent(AuthFile{Token: token}, "", " ")
 	if err != nil {
-		return fmt.Errorf("encode token: %w", err)
+		return err
 	}
 
-	if err := os.WriteFile(filePath, payload, 0o600); err != nil {
-		return fmt.Errorf("write token file: %w", err)
-	}
-
-	return nil
+	return os.WriteFile(filePath, data, 0o600)
 }
 
 func LoadToken() (string, error) {
@@ -55,7 +54,7 @@ func LoadToken() (string, error) {
 		return "", fmt.Errorf("read token file: %w", err)
 	}
 
-	var data tokenFile
+	var data AuthFile
 	if err := json.Unmarshal(payload, &data); err != nil {
 		return "", fmt.Errorf("decode token file: %w", err)
 	}

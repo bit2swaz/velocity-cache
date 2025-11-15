@@ -4,11 +4,15 @@ import { redirect } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 
 import CopyProjectIdButton from "./CopyProjectIdButton";
-import GenerateTokenButton from "./GenerateTokenButton";
+import GenerateTokenButton from "./generate-token-button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { prisma } from "@/lib/prisma";
+
+function formatTimestampUTC(date: Date): string {
+  return `${date.toISOString().replace("T", " ").slice(0, 19)} UTC`;
+}
 
 export default async function SettingsPage() {
   const { userId } = await auth();
@@ -28,6 +32,12 @@ export default async function SettingsPage() {
       : Promise.resolve([]),
     prisma.apiToken.findMany({ where: { userId }, orderBy: { createdAt: "desc" } }),
   ]);
+
+  const tokensWithMetadata = apiTokens.map((token) => ({
+    id: token.id,
+    label: token.note || "Untitled token",
+    createdAt: formatTimestampUTC(token.createdAt),
+  }));
 
   if (!orgMember) {
     return (
@@ -95,22 +105,22 @@ export default async function SettingsPage() {
           <CardTitle>API Tokens</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {apiTokens.length === 0 ? (
+          {tokensWithMetadata.length === 0 ? (
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
               You have not generated any API tokens yet.
             </p>
           ) : (
             <div className="space-y-3">
-              {apiTokens.map((token) => (
+              {tokensWithMetadata.map((token) => (
                 <div
                   key={token.id}
                   className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800"
                 >
                   <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                    {token.note || "Untitled token"}
+                    {token.label}
                   </p>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    Created {token.createdAt.toLocaleString()}
+                    Created {token.createdAt}
                   </p>
                 </div>
               ))}

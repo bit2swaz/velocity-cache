@@ -69,6 +69,9 @@ func compress(outputs []string, targetZip string, packagePath string) (err error
 		cleaned := filepath.Clean(output)
 		info, statErr := os.Stat(cleaned)
 		if statErr != nil {
+			if os.IsNotExist(statErr) {
+				continue
+			}
 			return fmt.Errorf("compress: stat %s: %w", cleaned, statErr)
 		}
 		if !info.IsDir() {

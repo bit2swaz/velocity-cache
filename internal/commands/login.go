@@ -30,8 +30,9 @@ func newLoginCommand() *cobra.Command {
 
 			token := string(byteToken)
 
-			if err := auth.SaveToken(token); err != nil {
-				return err
+			err = auth.SaveToken(token)
+			if err != nil {
+				return fmt.Errorf("Failed to save token: %w", err)
 			}
 
 			fmt.Println("[VelocityCache] Token saved successfully.")

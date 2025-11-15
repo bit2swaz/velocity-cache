@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"strings"
 
@@ -34,26 +33,28 @@ func newLinkCommand() *cobra.Command {
 				return fmt.Errorf("project id cannot be empty")
 			}
 
-			configBytes, err := ioutil.ReadFile(configFileName)
-			if err != nil {
-				return fmt.Errorf("read %s: %w", configFileName, err)
-			}
+			configFilePath := "velocity.config.json"
+			configMap := make(map[string]interface{})
 
-			var configMap map[string]interface{}
-			if err := json.Unmarshal(configBytes, &configMap); err != nil {
-				return fmt.Errorf("parse %s: %w", configFileName, err)
+			data, err := os.ReadFile(configFilePath)
+			if err == nil {
+				if err := json.Unmarshal(data, &configMap); err != nil {
+					return fmt.Errorf("Failed to parse config: %w", err)
+				}
+			} else if !os.IsNotExist(err) {
+				return fmt.Errorf("Failed to read config: %w", err)
 			}
 
 			configMap["project_id"] = projectID
 
 			updated, err := json.MarshalIndent(configMap, "", "  ")
 			if err != nil {
-				return fmt.Errorf("encode %s: %w", configFileName, err)
+				return fmt.Errorf("Failed to encode config: %w", err)
 			}
 			updated = append(updated, '\n')
 
-			if err := ioutil.WriteFile(configFileName, updated, 0o644); err != nil {
-				return fmt.Errorf("write %s: %w", configFileName, err)
+			if err := os.WriteFile(configFilePath, updated, 0o644); err != nil {
+				return fmt.Errorf("Failed to write config: %w", err)
 			}
 
 			fmt.Println("[VelocityCache] Project ID linked successfully.")

@@ -309,6 +309,16 @@ func (s *Server) HandleDownload(w http.ResponseWriter, r *http.Request) {
 	// TODO: Implement quota check here.
 
 	objectKey := fmt.Sprintf("%s/%s/%s.zip", orgId, projectId, key)
+	exists, err := s.s3Client.CheckRemote(r.Context(), objectKey)
+	if err != nil {
+		log.Printf("ERROR: check remote object %s: %v", objectKey, err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	if !exists {
+		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
 
 	url, err := s.s3Client.GeneratePresignedDownloadURL(objectKey, s.presignExpiry)
 	if err != nil {

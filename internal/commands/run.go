@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,13 +25,14 @@ import (
 )
 
 var (
-	prefixStyle = color.New(color.FgHiCyan, color.Bold)
-	hitStyle    = color.New(color.FgHiGreen, color.Bold)
-	missStyle   = color.New(color.FgHiYellow, color.Bold)
-	infoStyle   = color.New(color.FgHiWhite)
-	subtleStyle = color.New(color.FgHiBlack)
-	warnStyle   = color.New(color.FgHiMagenta, color.Bold)
-	errorStyle  = color.New(color.FgHiRed, color.Bold)
+	prefixStyle        = color.New(color.FgHiCyan, color.Bold)
+	hitStyle           = color.New(color.FgHiGreen, color.Bold)
+	missStyle          = color.New(color.FgHiYellow, color.Bold)
+	infoStyle          = color.New(color.FgHiWhite)
+	subtleStyle        = color.New(color.FgHiBlack)
+	warnStyle          = color.New(color.FgHiMagenta, color.Bold)
+	errorStyle         = color.New(color.FgHiRed, color.Bold)
+	errPublicCacheMiss = engine.ErrPublicCacheMiss
 )
 
 type cacheMetadata struct {
@@ -419,10 +421,14 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 
 			downloadResp, found, err := apiClient.GetDownloadURL(e.ctx, e.projectId, cacheKey)
 			if err != nil {
-				task.State = 3
-				err = fmt.Errorf("velocity SaaS download for %s: %w", task.ID, err)
-				task.LastError = err
-				return "", err
+				if errors.Is(err, errPublicCacheMiss) {
+					found = false
+				} else {
+					task.State = 3
+					err = fmt.Errorf("velocity SaaS download for %s: %w", task.ID, err)
+					task.LastError = err
+					return "", err
+				}
 			}
 			if found {
 				if strings.TrimSpace(downloadResp.Warning) != "" {

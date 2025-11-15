@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,6 +23,9 @@ type PresignResponse struct {
 	URL     string `json:"url"`
 	Warning string `json:"warning,omitempty"`
 }
+
+// ErrPublicCacheMiss indicates the remote cache does not have the requested artifact.
+var ErrPublicCacheMiss = errors.New("public cache miss")
 
 // NewSaaSAPIClient constructs a new client with the provided API base URL and bearer token.
 func NewSaaSAPIClient(baseURL, token string) *SaaSAPIClient {
@@ -78,7 +82,7 @@ func (c *SaaSAPIClient) GetDownloadURL(ctx context.Context, projectID, cacheKey 
 		}
 		return payload, true, nil
 	case http.StatusNotFound:
-		return PresignResponse{}, false, nil
+		return PresignResponse{}, false, ErrPublicCacheMiss
 	default:
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return PresignResponse{}, false, fmt.Errorf("download request failed: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))

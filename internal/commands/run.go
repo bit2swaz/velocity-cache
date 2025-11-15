@@ -706,7 +706,7 @@ func logAsyncFailure(errOut io.Writer, err error) {
 	fmt.Fprintf(errOut, "%s %s %v\n", prefix(), errorStyle.Sprint("REMOTE UPLOAD FAILED."), err)
 }
 
-const defaultPublicAPIBase = "https://velocity-api-2pno.onrender.com"
+const defaultPublicAPIBase = "https://velocity-api-ly66.onrender.com"
 
 func publicAPIBaseURL() string {
 	if v := strings.TrimSpace(os.Getenv("VELOCITY_PUBLIC_CACHE_API")); v != "" {

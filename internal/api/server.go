@@ -109,7 +109,7 @@ func (s *Server) AuthMiddleware(next http.Handler) http.Handler {
 		tokenHash := hex.EncodeToString(hash[:])
 
 		var userID string
-		if err := s.db.QueryRow(context.Background(), "SELECT user_id FROM ApiToken WHERE token_hash = $1", tokenHash).Scan(&userID); err != nil {
+		if err := s.db.QueryRow(context.Background(), "SELECT \"userId\" FROM \"ApiToken\" WHERE \"tokenHash\" = $1", tokenHash).Scan(&userID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
@@ -183,7 +183,7 @@ func (s *Server) HandleCacheEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	const authQuery = "SELECT T1.org_id FROM Project AS T1 JOIN OrgMember AS T2 ON T1.org_id = T2.org_id WHERE T1.id = $1 AND T2.user_id = $2"
+	const authQuery = "SELECT T1.\"orgId\" FROM \"Project\" AS T1 JOIN \"OrgMember\" AS T2 ON T1.\"orgId\" = T2.\"orgId\" WHERE T1.id = $1 AND T2.\"userId\" = $2"
 	var orgID string
 	err := s.db.QueryRow(r.Context(), authQuery, req.ProjectID, userID).Scan(&orgID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -196,7 +196,7 @@ func (s *Server) HandleCacheEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	const insertQuery = "INSERT INTO CacheEvent (id, \"createdAt\", status, hash, size, duration, \"projectId\") VALUES ($1, NOW(), $2, $3, $4, $5, $6)"
+	const insertQuery = "INSERT INTO \"CacheEvent\" (id, \"createdAt\", status, hash, size, duration, \"projectId\") VALUES ($1, NOW(), $2, $3, $4, $5, $6)"
 	eventID := cuid.New()
 	if _, err := s.db.Exec(r.Context(), insertQuery, eventID, req.Status, req.Hash, req.Size, req.Duration, req.ProjectID); err != nil {
 		log.Printf("ERROR: insert cache event user %s project %s: %v", userID, req.ProjectID, err)
@@ -239,7 +239,7 @@ func (s *Server) HandleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var orgId string
-	err := s.db.QueryRow(r.Context(), "SELECT T1.org_id FROM Project AS T1 JOIN OrgMember AS T2 ON T1.org_id = T2.org_id WHERE T1.id = $1 AND T2.user_id = $2", projectId, userId).Scan(&orgId)
+	err := s.db.QueryRow(r.Context(), "SELECT T1.\"orgId\" FROM \"Project\" AS T1 JOIN \"OrgMember\" AS T2 ON T1.\"orgId\" = T2.\"orgId\" WHERE T1.id = $1 AND T2.\"userId\" = $2", projectId, userId).Scan(&orgId)
 	if errors.Is(err, pgx.ErrNoRows) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
@@ -290,7 +290,7 @@ func (s *Server) HandleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var orgId string
-	err := s.db.QueryRow(r.Context(), "SELECT T1.org_id FROM Project AS T1 JOIN OrgMember AS T2 ON T1.org_id = T2.org_id WHERE T1.id = $1 AND T2.user_id = $2", projectId, userId).Scan(&orgId)
+	err := s.db.QueryRow(r.Context(), "SELECT T1.\"orgId\" FROM \"Project\" AS T1 JOIN \"OrgMember\" AS T2 ON T1.\"orgId\" = T2.\"orgId\" WHERE T1.id = $1 AND T2.\"userId\" = $2", projectId, userId).Scan(&orgId)
 	if errors.Is(err, pgx.ErrNoRows) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return

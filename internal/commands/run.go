@@ -581,38 +581,26 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 		if e.useSaaS {
 			logCacheMissUpload(e.out)
 			uploadCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			defer cancel()
-
 			apiClient := engine.NewSaaSAPIClient(e.publicAPIBase, e.apiToken)
 			apiClient.SetHTTPClient(e.httpClient)
 
-			uploadResp, err := apiClient.GetUploadURL(uploadCtx, e.projectId, cacheKey)
-			if err != nil {
+			if warning, err := uploadWithSaaS(uploadCtx, apiClient, e.projectId, cacheKey, localZip); err != nil {
 				logAsyncFailure(e.errOut, err)
-			} else if uploadResp.URL != "" {
-				if strings.TrimSpace(uploadResp.Warning) != "" {
-					logWarning(e.errOut, uploadResp.Warning)
-				}
-				if err := uploadToPresignedURL(uploadCtx, apiClient.HTTPClient(), uploadResp.URL, localZip); err != nil {
-					logAsyncFailure(e.errOut, err)
-				}
+			} else if strings.TrimSpace(warning) != "" {
+				logWarning(e.errOut, warning)
 			}
 
 			if metaPath, err := engine.LocalCacheMetadataPath(cacheKey); err == nil {
 				if metaKey, err := engine.CacheMetadataObjectName(cacheKey); err == nil {
-					metaResp, err := apiClient.GetUploadURL(uploadCtx, e.projectId, metaKey)
-					if err != nil {
+					if warning, err := uploadWithSaaS(uploadCtx, apiClient, e.projectId, metaKey, metaPath); err != nil {
 						logAsyncFailure(e.errOut, err)
-					} else if metaResp.URL != "" {
-						if strings.TrimSpace(metaResp.Warning) != "" {
-							logWarning(e.errOut, metaResp.Warning)
-						}
-						if err := uploadToPresignedURL(uploadCtx, apiClient.HTTPClient(), metaResp.URL, metaPath); err != nil {
-							logAsyncFailure(e.errOut, err)
-						}
+					} else if strings.TrimSpace(warning) != "" {
+						logWarning(e.errOut, warning)
 					}
 				}
 			}
+
+			cancel()
 		} else if e.s3Client != nil {
 			logCacheMissUpload(e.out)
 			uploads := make([]<-chan error, 0, 2)
@@ -674,7 +662,7 @@ func logCacheMissUpload(out io.Writer) {
 	fmt.Fprintf(out, "%s %s %s\n",
 		prefix(),
 		missStyle.Sprint("CACHE MISS."),
-		infoStyle.Sprint("Uploading to remote cache (async)..."),
+		infoStyle.Sprint("Uploading to remote cache..."),
 	)
 }
 
@@ -920,4 +908,18 @@ func downloadRemoteMetadata(ctx context.Context, client *storage.S3Client, cache
 		return err
 	}
 	return client.DownloadRemote(ctx, metaKey, metaPath)
+}
+
+func uploadWithSaaS(ctx context.Context, client *engine.SaaSAPIClient, projectID, objectKey, filePath string) (string, error) {
+	resp, err := client.GetUploadURL(ctx, projectID, objectKey)
+	if err != nil {
+		return "", err
+	}
+	if resp.URL == "" {
+		return resp.Warning, fmt.Errorf("upload response missing url")
+	}
+	if err := uploadToPresignedURL(ctx, client.HTTPClient(), resp.URL, filePath); err != nil {
+		return resp.Warning, err
+	}
+	return resp.Warning, nil
 }

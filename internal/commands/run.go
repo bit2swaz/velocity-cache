@@ -1,15 +1,10 @@
 package commands
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -18,29 +13,21 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
-	"github.com/bit2swaz/velocity-cache/internal/auth"
 	"github.com/bit2swaz/velocity-cache/internal/config"
 	"github.com/bit2swaz/velocity-cache/internal/engine"
-	"github.com/bit2swaz/velocity-cache/internal/storage"
 )
 
 var (
-	prefixStyle        = color.New(color.FgHiCyan, color.Bold)
-	hitStyle           = color.New(color.FgHiGreen, color.Bold)
-	missStyle          = color.New(color.FgHiYellow, color.Bold)
-	infoStyle          = color.New(color.FgHiWhite)
-	subtleStyle        = color.New(color.FgHiBlack)
-	warnStyle          = color.New(color.FgHiMagenta, color.Bold)
-	errorStyle         = color.New(color.FgHiRed, color.Bold)
-	errPublicCacheMiss = engine.ErrPublicCacheMiss
+	prefixStyle = color.New(color.FgHiCyan, color.Bold)
+	hitStyle    = color.New(color.FgHiGreen, color.Bold)
+	missStyle   = color.New(color.FgHiYellow, color.Bold)
+	infoStyle   = color.New(color.FgHiWhite)
+	subtleStyle = color.New(color.FgHiBlack)
+	warnStyle   = color.New(color.FgHiMagenta, color.Bold)
+	errorStyle  = color.New(color.FgHiRed, color.Bold)
 )
 
-type cacheMetadata struct {
-	Command        string    `json:"command"`
-	DurationMillis int64     `json:"duration_millis"`
-	RecordedAt     time.Time `json:"recorded_at"`
-}
-
+// ExitError is an error that carries a specific exit code.
 type ExitError interface {
 	error
 	ExitCode() int
@@ -75,41 +62,36 @@ func newExitError(code int, err error) ExitError {
 
 func newRunCommand() *cobra.Command {
 	var packageSelector string
-
 	cmd := &cobra.Command{
-		Use:   "run <script-name>",
-		Short: "Execute a velocity script with caching",
+		Use:   "run <task-name>",
+		Short: "Execute a pipeline task",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cmd.SilenceUsage = true
+			// cmd.SilenceUsage = true
 			return runScript(cmd, args[0], packageSelector)
 		},
 	}
-
-	cmd.Flags().StringVarP(&packageSelector, "package", "p", "", "Target package name or path to run the task against")
-
+	cmd.Flags().StringVarP(&packageSelector, "package", "p", "", "Target package")
 	return cmd
 }
 
-func runScript(cmd *cobra.Command, scriptName, packageSelector string) error {
+func runScript(cmd *cobra.Command, taskName, packageSelector string) error {
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
 	out := cmd.OutOrStdout()
-	errOut := cmd.ErrOrStderr()
 
+	// 1. Load Config (YAML)
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	if _, ok := cfg.Tasks[scriptName]; !ok {
-		return fmt.Errorf("task %q not found in velocity.config.json", scriptName)
+	// 2. Discover Packages
+	packageGlobs := []string{"apps/*", "libs/*", "packages/*"}
+	if len(cfg.Packages) > 0 {
+		packageGlobs = cfg.Packages
 	}
 
-	packages, err := engine.DiscoverPackages(cfg.Packages)
+	packages, err := engine.DiscoverPackages(packageGlobs)
 	if err != nil {
 		return fmt.Errorf("discover packages: %w", err)
 	}
@@ -120,22 +102,183 @@ func runScript(cmd *cobra.Command, scriptName, packageSelector string) error {
 		}
 	}
 
-	targetPackage, err := selectTargetPackage(packageSelector, packages)
+	// 3. Select Target
+	target, err := selectTargetPackage(packageSelector, packages)
 	if err != nil {
 		return err
 	}
 
-	rootNode, err := engine.BuildTaskGraph(scriptName, targetPackage, packages, cfg, map[string]bool{})
+	// 4. Build Graph
+	// Note: cfg is passed to look up tasks in the Pipeline
+	root, err := engine.BuildTaskGraph(taskName, target, packages, cfg, nil)
 	if err != nil {
 		return fmt.Errorf("build task graph: %w", err)
 	}
 
-	if err := ExecuteGraph(ctx, rootNode, cfg, out, errOut); err != nil {
-		return err
+	// 5. Execute
+	exec := &Engine{
+		ctx:    ctx,
+		cfg:    cfg,
+		out:    out,
+		errOut: cmd.ErrOrStderr(),
 	}
 
-	return nil
+	// Initialize Remote Client if enabled in YAML
+	if cfg.Remote.Enabled {
+		// V3: No more S3 keys check. We just use the configured URL/Token.
+		exec.remote = engine.NewRemoteClient(cfg.Remote.URL, cfg.Remote.Token)
+	}
+
+	_, err = exec.ExecuteTask(root)
+	return err
 }
+
+type Engine struct {
+	ctx    context.Context
+	cfg    *config.Config
+	out    io.Writer
+	errOut io.Writer
+	remote *engine.RemoteClient
+}
+
+func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
+	if task == nil {
+		return "", nil
+	}
+
+	// Cycle/State checks
+	if task.State == 2 {
+		return task.CacheKey, nil
+	}
+	if task.State == 1 {
+		return "", fmt.Errorf("cycle detected while executing %s", task.ID)
+	}
+	task.State = 1
+
+	logTaskHeader(e.out, task.ID)
+
+	// 1. Run Dependencies (Parallel)
+	var wg sync.WaitGroup
+	var depKeys []string
+	var depMu sync.Mutex
+	var depErr error
+
+	for _, dep := range task.Dependencies {
+		wg.Add(1)
+		go func(d *engine.TaskNode) {
+			defer wg.Done()
+			k, err := e.ExecuteTask(d)
+			depMu.Lock()
+			if err != nil && depErr == nil {
+				depErr = err
+			}
+			if k != "" {
+				depKeys = append(depKeys, k)
+			}
+			depMu.Unlock()
+		}(dep)
+	}
+	wg.Wait()
+	if depErr != nil {
+		task.State = 3
+		return "", depErr
+	}
+
+	// 2. Generate Hash
+	key, err := engine.GenerateTaskNodeCacheKey(task, depKeys)
+	if err != nil {
+		return "", err
+	}
+	task.CacheKey = key
+
+	start := time.Now()
+	packagePath := ""
+	if task.Package != nil {
+		packagePath = task.Package.Path
+	}
+
+	// 3. Check Local Cache
+	cacheZip, found, err := engine.CheckLocal(key)
+	if err == nil && found {
+		if err := engine.Extract(cacheZip, task.TaskConfig.Outputs, packagePath); err == nil {
+			logCacheHit(e.out, "local", time.Since(start))
+			task.State = 2
+			return key, nil
+		}
+	}
+
+	// 4. Check Remote Cache (V3 Negotiation)
+	if e.remote != nil {
+		resp, err := e.remote.Negotiate(e.ctx, key, "download")
+		if err == nil && resp.Status == "found" {
+			// HIT! Download it.
+			tmp, _ := os.CreateTemp("", "velo-dl-*.zip")
+			defer os.Remove(tmp.Name())
+
+			// V3 Transfer Agent handles S3 vs Proxy logic internally
+			err = engine.Transfer(e.ctx, "GET", resp.URL, e.cfg.Remote.URL, nil, tmp, 0, e.cfg.Remote.Token)
+			if err == nil {
+				tmp.Close()
+				// Save to local cache for next time
+				localZip, _ := engine.SaveLocal(key, tmp.Name())
+				engine.Extract(localZip, task.TaskConfig.Outputs, packagePath)
+
+				logCacheHit(e.out, "remote", time.Since(start))
+				task.State = 2
+				return key, nil
+			}
+		}
+	}
+
+	// 5. Execute Task (Cache Miss)
+	logCacheMissExecuting(e.out, task.TaskConfig.Command)
+	if _, err := engine.Execute(task.TaskConfig, packagePath); err != nil {
+		task.State = 3
+		return "", err
+	}
+
+	// 6. Upload Cache (V3 Negotiation)
+	// We only attempt upload if remote is enabled
+	if e.remote != nil {
+		resp, err := e.remote.Negotiate(e.ctx, key, "upload")
+		if err == nil && resp.Status == "upload_needed" {
+			logInfo(e.out, "Uploading artifact...")
+
+			// Compress
+			tmp, _ := os.CreateTemp("", "velo-up-*.zip")
+			defer os.Remove(tmp.Name())
+			engine.Compress(task.TaskConfig.Outputs, tmp.Name(), packagePath)
+
+			// Save to local cache first (so we have the file to upload)
+			localZip, _ := engine.SaveLocal(key, tmp.Name())
+
+			// Transfer
+			f, _ := os.Open(localZip)
+			stat, _ := f.Stat()
+			err = engine.Transfer(e.ctx, "PUT", resp.URL, e.cfg.Remote.URL, f, nil, stat.Size(), e.cfg.Remote.Token)
+			f.Close()
+
+			if err != nil {
+				logWarning(e.errOut, fmt.Sprintf("Upload failed: %v", err))
+			} else {
+				logInfo(e.out, "Upload complete.")
+			}
+		} else if resp != nil && resp.Status == "skipped" {
+			logInfo(e.out, "Artifact already exists remotely (skipped).")
+		}
+	} else {
+		// If remote is disabled, just save local
+		tmp, _ := os.CreateTemp("", "velo-local-*.zip")
+		defer os.Remove(tmp.Name())
+		engine.Compress(task.TaskConfig.Outputs, tmp.Name(), packagePath)
+		engine.SaveLocal(key, tmp.Name())
+	}
+
+	task.State = 2
+	return key, nil
+}
+
+// --- Helper Functions (Kept from your previous code) ---
 
 func selectTargetPackage(selector string, packages map[string]*engine.Package) (*engine.Package, error) {
 	if len(packages) == 0 {
@@ -187,28 +330,22 @@ func rootPackages(packages map[string]*engine.Package) []*engine.Package {
 			depSet[depName] = struct{}{}
 		}
 	}
-
 	roots := make([]*engine.Package, 0, len(packages))
 	for name, pkg := range packages {
 		if _, ok := depSet[name]; !ok {
 			roots = append(roots, pkg)
 		}
 	}
-
 	sort.Slice(roots, func(i, j int) bool {
-		if roots[i].Path == roots[j].Path {
-			return roots[i].Name < roots[j].Name
-		}
-		return roots[i].Path < roots[j].Path
+		return roots[i].Name < roots[j].Name
 	})
-
 	return roots
 }
 
 func availablePackageDescriptions(packages map[string]*engine.Package) []string {
 	desc := make([]string, 0, len(packages))
 	for _, pkg := range packages {
-		desc = append(desc, describePackage(pkg))
+		desc = append(desc, pkg.Name)
 	}
 	sort.Strings(desc)
 	return desc
@@ -217,709 +354,30 @@ func availablePackageDescriptions(packages map[string]*engine.Package) []string 
 func packageSliceDescriptions(pkgs []*engine.Package) []string {
 	desc := make([]string, 0, len(pkgs))
 	for _, pkg := range pkgs {
-		desc = append(desc, describePackage(pkg))
+		desc = append(desc, pkg.Name)
 	}
 	return desc
 }
 
-func describePackage(pkg *engine.Package) string {
-	if pkg == nil {
-		return "<unknown>"
-	}
-
-	name := strings.TrimSpace(pkg.Name)
-	path := strings.TrimSpace(pkg.Path)
-
-	switch {
-	case name != "" && path != "" && name != path:
-		return fmt.Sprintf("%s (%s)", name, path)
-	case path != "":
-		return path
-	case name != "":
-		return name
-	default:
-		return "<unnamed>"
-	}
-}
-
-// ExecuteGraph walks the task dependency graph, executing each node exactly once
-// after all of its dependencies have completed (or been restored from cache).
-
-func ExecuteGraph(ctx context.Context, root *engine.TaskNode, cfg *config.Config, out, errOut io.Writer) error {
-	if root == nil {
-		return nil
-	}
-
-	executor, err := newEngine(ctx, cfg, out, errOut)
-	if err != nil {
-		return err
-	}
-
-	_, err = executor.ExecuteTask(root)
-	return err
-}
-
-type Engine struct {
-	ctx           context.Context
-	cfg           *config.Config
-	out           io.Writer
-	errOut        io.Writer
-	httpClient    *http.Client
-	s3Client      *storage.S3Client
-	useSaaS       bool
-	apiToken      string
-	projectId     string
-	publicAPIBase string
-}
-
-func newEngine(ctx context.Context, cfg *config.Config, out, errOut io.Writer) (*Engine, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	token, _ := auth.LoadToken()
-	token = strings.TrimSpace(token)
-	projectID := strings.TrimSpace(cfg.ProjectID)
-	hasKeys := strings.TrimSpace(os.Getenv("R2_ACCESS_KEY_ID")) != "" || strings.TrimSpace(os.Getenv("AWS_ACCESS_KEY_ID")) != ""
-
-	exec := &Engine{
-		ctx:           ctx,
-		cfg:           cfg,
-		out:           out,
-		errOut:        errOut,
-		publicAPIBase: publicAPIBaseURL(),
-	}
-
-	if cfg.RemoteCache.Enabled {
-		exec.httpClient = &http.Client{Timeout: 30 * time.Second}
-
-		if token != "" && projectID != "" {
-			logInfo(out, "Using VelocityCache SaaS account.")
-			exec.useSaaS = true
-			exec.apiToken = token
-			exec.projectId = projectID
-		} else if hasKeys {
-			logInfo(out, "Using private S3/R2 credentials.")
-			client, err := storage.NewS3Client(ctx, cfg.RemoteCache.Bucket)
-			if err != nil {
-				return nil, fmt.Errorf("create remote cache client: %w", err)
-			}
-			exec.s3Client = client
-		} else {
-			logInfo(out, "No credentials found. Using local cache only.")
-		}
-	}
-
-	return exec, nil
-}
-
-func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
-	if task == nil {
-		return "", nil
-	}
-
-	switch task.State {
-	case 2:
-		return task.CacheKey, nil
-	case 1:
-		return "", fmt.Errorf("cycle detected while executing %s", task.ID)
-	case 3:
-		if task.LastError != nil {
-			return "", task.LastError
-		}
-		return "", fmt.Errorf("task %s previously failed", task.ID)
-	}
-
-	task.State = 1
-	task.CacheKey = ""
-	task.LastError = nil
-
-	logTaskHeader(e.out, task.ID)
-
-	depKeys := make([]string, 0, len(task.Dependencies))
-	if len(task.Dependencies) > 0 {
-		var (
-			depMu  sync.Mutex
-			depErr error
-			wg     sync.WaitGroup
-		)
-
-		for _, dep := range task.Dependencies {
-			dep := dep
-			if dep == nil {
-				continue
-			}
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				key, err := e.ExecuteTask(dep)
-				if err != nil {
-					depMu.Lock()
-					if depErr == nil {
-						depErr = err
-					}
-					depMu.Unlock()
-					return
-				}
-				if key != "" {
-					depMu.Lock()
-					depKeys = append(depKeys, key)
-					depMu.Unlock()
-				}
-			}()
-		}
-		wg.Wait()
-		if depErr != nil {
-			task.State = 3
-			task.LastError = depErr
-			return "", depErr
-		}
-	}
-
-	cacheKey, err := engine.GenerateTaskNodeCacheKey(task, depKeys)
-	if err != nil {
-		task.State = 3
-		err = fmt.Errorf("generate cache key for %s: %w", task.ID, err)
-		task.LastError = err
-		return "", err
-	}
-
-	task.CacheKey = cacheKey
-
-	savedDuration, hasSavedDuration := loadCacheDuration(cacheKey)
-	start := time.Now()
-	taskCfg := task.TaskConfig
-	packagePath := ""
-	if task.Package != nil {
-		packagePath = task.Package.Path
-	}
-
-	cacheZip, found, err := engine.CheckLocal(cacheKey)
-	if err != nil {
-		task.State = 3
-		err = fmt.Errorf("check local cache for %s: %w", task.ID, err)
-		task.LastError = err
-		return "", err
-	}
-	if found {
-		if err := engine.Extract(cacheZip, taskCfg.Outputs, packagePath); err != nil {
-			task.State = 3
-			err = fmt.Errorf("extract local cache for %s: %w", task.ID, err)
-			task.LastError = err
-			return "", err
-		}
-		logCacheHit(e.out, "local", time.Since(start), savedDuration, hasSavedDuration)
-		go reportCacheEvent(e, task, "HIT", 0, time.Since(start))
-		task.State = 2
-		return cacheKey, nil
-	}
-
-	if e.cfg.RemoteCache.Enabled {
-		if e.useSaaS {
-			apiClient := engine.NewSaaSAPIClient(e.publicAPIBase, e.apiToken)
-			apiClient.SetHTTPClient(e.httpClient)
-
-			downloadResp, found, err := apiClient.GetDownloadURL(e.ctx, e.projectId, cacheKey)
-			if err != nil {
-				if errors.Is(err, errPublicCacheMiss) {
-					found = false
-				} else {
-					task.State = 3
-					err = fmt.Errorf("velocity SaaS download for %s: %w", task.ID, err)
-					task.LastError = err
-					return "", err
-				}
-			}
-			if found {
-				if strings.TrimSpace(downloadResp.Warning) != "" {
-					logWarning(e.errOut, downloadResp.Warning)
-				}
-				tempDir, err := os.MkdirTemp("", "velocity-remote-*")
-				if err != nil {
-					task.State = 3
-					err = fmt.Errorf("create temp dir for %s: %w", task.ID, err)
-					task.LastError = err
-					return "", err
-				}
-				defer os.RemoveAll(tempDir)
-
-				tempZip := filepath.Join(tempDir, cacheKey+".zip")
-				if err := downloadToFile(e.ctx, apiClient.HTTPClient(), downloadResp.URL, tempZip); err != nil {
-					task.State = 3
-					err = fmt.Errorf("download SaaS cache for %s: %w", task.ID, err)
-					task.LastError = err
-					return "", err
-				}
-
-				localZip, err := engine.SaveLocal(cacheKey, tempZip)
-				if err != nil {
-					task.State = 3
-					err = fmt.Errorf("save SaaS cache locally for %s: %w", task.ID, err)
-					task.LastError = err
-					return "", err
-				}
-
-				if err := engine.Extract(localZip, taskCfg.Outputs, packagePath); err != nil {
-					task.State = 3
-					err = fmt.Errorf("extract SaaS cache for %s: %w", task.ID, err)
-					task.LastError = err
-					return "", err
-				}
-
-				logCacheHit(e.out, "remote", time.Since(start), savedDuration, hasSavedDuration)
-				go reportCacheEvent(e, task, "HIT", 0, time.Since(start))
-				task.State = 2
-				return cacheKey, nil
-			}
-		} else if e.s3Client != nil {
-			hasRemote, err := e.s3Client.CheckRemote(e.ctx, cacheKey)
-			if err != nil {
-				task.State = 3
-				err = fmt.Errorf("check remote cache for %s: %w", task.ID, err)
-				task.LastError = err
-				return "", err
-			}
-
-			if hasRemote {
-				tempDir, err := os.MkdirTemp("", "velocity-remote-*")
-				if err != nil {
-					task.State = 3
-					err = fmt.Errorf("create temp dir for %s: %w", task.ID, err)
-					task.LastError = err
-					return "", err
-				}
-				defer os.RemoveAll(tempDir)
-
-				tempZip := filepath.Join(tempDir, cacheKey+".zip")
-				if err := e.s3Client.DownloadRemote(e.ctx, cacheKey, tempZip); err != nil {
-					task.State = 3
-					err = fmt.Errorf("download remote cache for %s: %w", task.ID, err)
-					task.LastError = err
-					return "", err
-				}
-
-				localZip, err := engine.SaveLocal(cacheKey, tempZip)
-				if err != nil {
-					task.State = 3
-					err = fmt.Errorf("save remote cache locally for %s: %w", task.ID, err)
-					task.LastError = err
-					return "", err
-				}
-
-				if err := downloadRemoteMetadata(e.ctx, e.s3Client, cacheKey); err != nil {
-					logWarning(e.errOut, fmt.Sprintf("failed to download cache metadata: %v", err))
-				}
-
-				savedDuration, hasSavedDuration = loadCacheDuration(cacheKey)
-
-				if err := engine.Extract(localZip, taskCfg.Outputs, packagePath); err != nil {
-					task.State = 3
-					err = fmt.Errorf("extract remote cache for %s: %w", task.ID, err)
-					task.LastError = err
-					return "", err
-				}
-
-				logCacheHit(e.out, "remote", time.Since(start), savedDuration, hasSavedDuration)
-				go reportCacheEvent(e, task, "HIT", 0, time.Since(start))
-				task.State = 2
-				return cacheKey, nil
-			}
-		}
-	}
-
-	logCacheMissExecuting(e.out, taskCfg.Command)
-	execStart := time.Now()
-	exitCode, execErr := engine.Execute(taskCfg, packagePath)
-	execDuration := time.Since(execStart)
-	if execErr != nil {
-		logCacheFailure(e.errOut, taskCfg.Command, exitCode, execErr)
-		task.State = 3
-		err := newExitError(exitCode, fmt.Errorf("execute task %s: %w", task.ID, execErr))
-		task.LastError = err
-		return "", err
-	}
-
-	tempDir, err := os.MkdirTemp("", "velocity-outputs-*")
-	if err != nil {
-		task.State = 3
-		err = fmt.Errorf("create temp dir for %s: %w", task.ID, err)
-		task.LastError = err
-		return "", err
-	}
-	defer os.RemoveAll(tempDir)
-
-	tempZip := filepath.Join(tempDir, cacheKey+".zip")
-	if err := engine.Compress(taskCfg.Outputs, tempZip, packagePath); err != nil {
-		task.State = 3
-		err = fmt.Errorf("compress outputs for %s: %w", task.ID, err)
-		task.LastError = err
-		return "", err
-	}
-
-	localZip, err := engine.SaveLocal(cacheKey, tempZip)
-	if err != nil {
-		task.State = 3
-		err = fmt.Errorf("save cache locally for %s: %w", task.ID, err)
-		task.LastError = err
-		return "", err
-	}
-
-	fileInfo, err := os.Stat(localZip)
-	if err != nil {
-		logWarning(e.errOut, fmt.Sprintf("failed to stat cache artifact: %v", err))
-	} else {
-		go reportCacheEvent(e, task, "MISS", int(fileInfo.Size()), execDuration)
-	}
-
-	if err := storeCacheMetadata(cacheKey, taskCfg.Command, execDuration); err != nil {
-		logWarning(e.errOut, fmt.Sprintf("failed to record cache metadata: %v", err))
-	} else {
-		savedDuration, hasSavedDuration = execDuration, true
-	}
-
-	if e.cfg.RemoteCache.Enabled {
-		if e.useSaaS {
-			logCacheMissUpload(e.out)
-			uploadCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			apiClient := engine.NewSaaSAPIClient(e.publicAPIBase, e.apiToken)
-			apiClient.SetHTTPClient(e.httpClient)
-
-			if warning, err := uploadWithSaaS(uploadCtx, apiClient, e.projectId, cacheKey, localZip); err != nil {
-				logAsyncFailure(e.errOut, err)
-			} else if strings.TrimSpace(warning) != "" {
-				logWarning(e.errOut, warning)
-			}
-
-			if metaPath, err := engine.LocalCacheMetadataPath(cacheKey); err == nil {
-				if metaKey, err := engine.CacheMetadataObjectName(cacheKey); err == nil {
-					if warning, err := uploadWithSaaS(uploadCtx, apiClient, e.projectId, metaKey, metaPath); err != nil {
-						logAsyncFailure(e.errOut, err)
-					} else if strings.TrimSpace(warning) != "" {
-						logWarning(e.errOut, warning)
-					}
-				}
-			}
-
-			cancel()
-		} else if e.s3Client != nil {
-			logCacheMissUpload(e.out)
-			uploads := make([]<-chan error, 0, 2)
-			uploads = append(uploads, e.s3Client.UploadRemote(context.Background(), cacheKey, localZip))
-			if metaPath, err := engine.LocalCacheMetadataPath(cacheKey); err == nil {
-				if metaKey, err := engine.CacheMetadataObjectName(cacheKey); err == nil {
-					uploads = append(uploads, e.s3Client.UploadRemote(context.Background(), metaKey, metaPath))
-				}
-			}
-			for _, ch := range uploads {
-				if err := <-ch; err != nil {
-					logAsyncFailure(e.errOut, err)
-				}
-			}
-		}
-	}
-
-	logCacheStored(e.out, cacheKey, execDuration, savedDuration, hasSavedDuration)
-	task.State = 2
-	return cacheKey, nil
-}
-
-func prefix() string {
-	return prefixStyle.Sprint("[VelocityCache]")
-}
+// Logging helpers
+func prefix() string { return prefixStyle.Sprint("[VelocityCache]") }
 
 func logTaskHeader(out io.Writer, nodeID string) {
-	if strings.TrimSpace(nodeID) == "" {
-		nodeID = "<unnamed>"
-	}
-	fmt.Fprintf(out, "%s %s\n",
-		prefix(),
-		infoStyle.Sprintf("Task %s", nodeID),
-	)
+	fmt.Fprintf(out, "%s %s\n", prefix(), infoStyle.Sprintf("Task %s", nodeID))
 }
 
-func logCacheHit(out io.Writer, scope string, elapsed time.Duration, saved time.Duration, hasSaved bool) {
-	savedSuffix := ""
-	if hasSaved && saved > 0 {
-		savedSuffix = " " + subtleStyle.Sprintf("(saved %s)", humanDuration(saved))
-	}
-	fmt.Fprintf(out, "%s %s in %s%s\n",
-		prefix(),
-		hitStyle.Sprintf("CACHE HIT (%s)", scope),
-		humanDuration(elapsed),
-		savedSuffix,
-	)
+func logCacheHit(out io.Writer, scope string, elapsed time.Duration) {
+	fmt.Fprintf(out, "%s %s in %s\n", prefix(), hitStyle.Sprintf("CACHE HIT (%s)", scope), elapsed.Round(time.Millisecond))
 }
 
 func logCacheMissExecuting(out io.Writer, command string) {
-	fmt.Fprintf(out, "%s %s %s\n",
-		prefix(),
-		missStyle.Sprint("CACHE MISS."),
-		infoStyle.Sprintf("Executing %q...", command),
-	)
-}
-
-func logCacheMissUpload(out io.Writer) {
-	fmt.Fprintf(out, "%s %s %s\n",
-		prefix(),
-		missStyle.Sprint("CACHE MISS."),
-		infoStyle.Sprint("Uploading to remote cache..."),
-	)
+	fmt.Fprintf(out, "%s %s %s\n", prefix(), missStyle.Sprint("CACHE MISS."), infoStyle.Sprintf("Executing %q...", command))
 }
 
 func logInfo(out io.Writer, message string) {
 	fmt.Fprintf(out, "%s %s\n", prefix(), infoStyle.Sprint(message))
 }
 
-func logCacheStored(out io.Writer, cacheKey string, execDuration time.Duration, saved time.Duration, hasSaved bool) {
-	savings := ""
-	if hasSaved && saved > 0 {
-		savings = " " + subtleStyle.Sprintf("(future savings ~%s)", humanDuration(saved))
-	}
-	fmt.Fprintf(out, "%s %s %s%s\n",
-		prefix(),
-		missStyle.Sprint("CACHE MISS."),
-		infoStyle.Sprintf("Stored cache %q in %s.", cacheKey, humanDuration(execDuration)),
-		savings,
-	)
-}
-
-func logCacheFailure(errOut io.Writer, command string, exitCode int, execErr error) {
-	fmt.Fprintf(errOut, "%s %s %s (exit code %d)\n",
-		prefix(),
-		errorStyle.Sprint("COMMAND FAILED."),
-		infoStyle.Sprintf("%v while executing %q", execErr, command),
-		exitCode,
-	)
-}
-
 func logWarning(errOut io.Writer, message string) {
 	fmt.Fprintf(errOut, "%s %s %s\n", prefix(), warnStyle.Sprint("WARN"), infoStyle.Sprint(message))
-}
-
-func logAsyncFailure(errOut io.Writer, err error) {
-	fmt.Fprintf(errOut, "%s %s %v\n", prefix(), errorStyle.Sprint("REMOTE UPLOAD FAILED."), err)
-}
-
-const defaultPublicAPIBase = "https://velocity-api-ly66.onrender.com"
-
-func publicAPIBaseURL() string {
-	if v := strings.TrimSpace(os.Getenv("VELOCITY_PUBLIC_CACHE_API")); v != "" {
-		return strings.TrimSuffix(v, "/")
-	}
-	return defaultPublicAPIBase
-}
-
-func downloadToFile(ctx context.Context, client *http.Client, fileURL, dest string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
-	if err != nil {
-		return err
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download presigned url: status %d", resp.StatusCode)
-	}
-
-	file, err := os.Create(dest)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	if _, err := io.Copy(file, resp.Body); err != nil {
-		return err
-	}
-
-	return file.Sync()
-}
-
-func uploadToPresignedURL(ctx context.Context, client *http.Client, fileURL, path string) error {
-	file, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	info, err := file.Stat()
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, fileURL, file)
-	if err != nil {
-		return err
-	}
-	req.ContentLength = info.Size()
-	req.Header.Set("Content-Type", "application/zip")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("upload presigned url: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	return nil
-}
-
-func humanDuration(d time.Duration) string {
-	if d < time.Millisecond {
-		return "0s"
-	}
-	if d < time.Second {
-		return fmt.Sprintf("%dms", d.Milliseconds())
-	}
-	if d < time.Minute {
-		return fmt.Sprintf("%.1fs", float64(d)/float64(time.Second))
-	}
-	minutes := d / time.Minute
-	seconds := (d % time.Minute) / time.Second
-	if minutes >= 60 {
-		hours := minutes / time.Hour
-		minutes = minutes % time.Hour
-		return fmt.Sprintf("%dh %dm", hours, minutes)
-	}
-	if seconds == 0 {
-		return fmt.Sprintf("%dm", minutes)
-	}
-	return fmt.Sprintf("%dm %ds", minutes, seconds)
-}
-
-func loadCacheDuration(cacheKey string) (time.Duration, bool) {
-	path, err := engine.LocalCacheMetadataPath(cacheKey)
-	if err != nil {
-		return 0, false
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return 0, false
-	}
-	var meta cacheMetadata
-	if err := json.Unmarshal(data, &meta); err != nil {
-		return 0, false
-	}
-	if meta.DurationMillis <= 0 {
-		return 0, false
-	}
-	return time.Duration(meta.DurationMillis) * time.Millisecond, true
-}
-
-func reportCacheEvent(e *Engine, task *engine.TaskNode, status string, size int, duration time.Duration) {
-	go func() {
-		if e == nil || !e.useSaaS {
-			return
-		}
-		if task == nil || strings.TrimSpace(task.CacheKey) == "" {
-			return
-		}
-		if strings.TrimSpace(e.projectId) == "" || strings.TrimSpace(e.apiToken) == "" {
-			return
-		}
-		if e.httpClient == nil {
-			return
-		}
-
-		payload := map[string]any{
-			"projectId": e.projectId,
-			"hash":      task.CacheKey,
-			"status":    status,
-			"size":      size,
-			"duration":  int(duration.Milliseconds()),
-		}
-
-		body, err := json.Marshal(payload)
-		if err != nil {
-			logAsyncFailure(e.errOut, fmt.Errorf("marshal cache event: %w", err))
-			return
-		}
-
-		ctx := e.ctx
-		if ctx == nil {
-			ctx = context.Background()
-		}
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.publicAPIBase+"/api/v1/cache/event", bytes.NewReader(body))
-		if err != nil {
-			logAsyncFailure(e.errOut, fmt.Errorf("create cache event request: %w", err))
-			return
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+e.apiToken)
-
-		resp, err := e.httpClient.Do(req)
-		if err != nil {
-			logAsyncFailure(e.errOut, fmt.Errorf("cache event request failed: %w", err))
-			return
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-			logAsyncFailure(e.errOut, fmt.Errorf("cache event status %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
-			return
-		}
-	}()
-}
-
-func storeCacheMetadata(cacheKey, command string, duration time.Duration) error {
-	path, err := engine.LocalCacheMetadataPath(cacheKey)
-	if err != nil {
-		return err
-	}
-	durationMillis := duration.Milliseconds()
-	if durationMillis == 0 && duration > 0 {
-		durationMillis = 1
-	}
-	meta := cacheMetadata{
-		Command:        command,
-		DurationMillis: durationMillis,
-		RecordedAt:     time.Now().UTC(),
-	}
-	contents, err := json.MarshalIndent(meta, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, contents, 0o644)
-}
-
-func downloadRemoteMetadata(ctx context.Context, client *storage.S3Client, cacheKey string) error {
-	metaKey, err := engine.CacheMetadataObjectName(cacheKey)
-	if err != nil {
-		return err
-	}
-	exists, err := client.CheckRemote(ctx, metaKey)
-	if err != nil {
-		return err
-	}
-	if !exists {
-		return nil
-	}
-	metaPath, err := engine.LocalCacheMetadataPath(cacheKey)
-	if err != nil {
-		return err
-	}
-	return client.DownloadRemote(ctx, metaKey, metaPath)
-}
-
-func uploadWithSaaS(ctx context.Context, client *engine.SaaSAPIClient, projectID, objectKey, filePath string) (string, error) {
-	resp, err := client.GetUploadURL(ctx, projectID, objectKey)
-	if err != nil {
-		return "", err
-	}
-	if resp.URL == "" {
-		return resp.Warning, fmt.Errorf("upload response missing url")
-	}
-	if err := uploadToPresignedURL(ctx, client.HTTPClient(), resp.URL, filePath); err != nil {
-		return resp.Warning, err
-	}
-	return resp.Warning, nil
 }

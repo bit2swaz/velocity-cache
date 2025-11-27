@@ -11,7 +11,7 @@ import (
 
 func TestBuildTaskGraphCycleDetection(t *testing.T) {
 	cfg := &config.Config{
-		Tasks: map[string]config.TaskConfig{
+		Pipeline: map[string]config.TaskConfig{
 			"build": {
 				DependsOn: []string{"test"},
 			},
@@ -36,7 +36,7 @@ func TestBuildTaskGraphCycleDetection(t *testing.T) {
 
 func TestBuildTaskGraphTopologicalDependencies(t *testing.T) {
 	cfg := &config.Config{
-		Tasks: map[string]config.TaskConfig{
+		Pipeline: map[string]config.TaskConfig{
 			"build": {
 				DependsOn: []string{"^build"},
 			},

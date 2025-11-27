@@ -21,29 +21,32 @@ func (h *Handler) HandleProxyUpload(w http.ResponseWriter, r *http.Request) {
 
 	root := os.Getenv("VC_LOCAL_ROOT")
 	if root == "" {
+		fmt.Println("❌ ERROR: VC_LOCAL_ROOT env var is missing in handler!") // Debug Log
 		http.Error(w, "Server configuration error: VC_LOCAL_ROOT not set", http.StatusInternalServerError)
 		return
 	}
 
-	// Ensure the directory exists (in case it wasn't created or key has paths)
-	// For security, we should probably sanitize key, but assuming hash for now.
 	path := filepath.Join(root, key)
+	fmt.Printf("📝 Attempting to write file to: %s\n", path) // Debug Log
 
 	// Create the file
 	out, err := os.Create(path)
 	if err != nil {
+		fmt.Printf("❌ Create File Error: %v\n", err) // Debug Log
 		http.Error(w, fmt.Sprintf("Failed to create file: %v", err), http.StatusInternalServerError)
 		return
 	}
 	defer out.Close()
 
 	// Stream the body to the file
-	_, err = io.Copy(out, r.Body)
+	n, err := io.Copy(out, r.Body)
 	if err != nil {
+		fmt.Printf("Copy Error: %v\n", err) // Debug Log
 		http.Error(w, fmt.Sprintf("Failed to write file: %v", err), http.StatusInternalServerError)
 		return
 	}
 
+	fmt.Printf("Successfully wrote %d bytes to %s\n", n, path) // Debug Log
 	w.WriteHeader(http.StatusOK)
 }
 

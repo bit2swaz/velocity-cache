@@ -1,0 +1,11 @@
+version: 1
+project_id: "test-project"
+remote:
+  enabled: true
+  url: "http://localhost:8080"
+  token: "secret123"
+pipeline:
+  build:
+    command: "echo building"
+    outputs: ["dist"]
+    depends_on: []

@@ -1,4 +1,8 @@
 velocity-cli
+server
 build/
 node_modules
 .env
+dist
+.velocity
+tmp-cache-storage

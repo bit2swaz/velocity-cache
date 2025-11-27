@@ -46,7 +46,7 @@ func BuildTaskGraph(targetTaskName string, targetPackage *Package, allPackages m
 		return nil, fmt.Errorf("detected cycle while building task graph at %s", nodeID)
 	}
 
-	taskCfg, ok := cfg.Tasks[targetTaskName]
+	taskCfg, ok := cfg.Pipeline[targetTaskName]
 	if !ok {
 		return nil, fmt.Errorf("task %q not defined in configuration", targetTaskName)
 	}

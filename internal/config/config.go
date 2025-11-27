@@ -2,51 +2,49 @@ package config
 
 import (
 	"fmt"
+	"os"
 
-	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
-const (
-	configName = "velocity.config"
-	configType = "json"
-)
-
-// Config is the top-level configuration struct.
+// Config represents the velocity.yml structure
 type Config struct {
-	ProjectID   string                `mapstructure:"project_id" json:"project_id,omitempty"`
-	RemoteCache RemoteCacheConfig     `mapstructure:"remote_cache" json:"remote_cache"`
-	Packages    []string              `mapstructure:"packages" json:"packages"`
-	Tasks       map[string]TaskConfig `mapstructure:"tasks" json:"tasks"`
+	Version   int                   `yaml:"version"`
+	ProjectID string                `yaml:"project_id"`
+	Remote    RemoteConfig          `yaml:"remote"`
+	Packages  []string              `yaml:"packages"`
+	Pipeline  map[string]TaskConfig `yaml:"pipeline"` // Renamed from 'Tasks'
 }
 
-// RemoteCacheConfig holds configuration for the S3 cache.
-type RemoteCacheConfig struct {
-	Enabled bool   `mapstructure:"enabled" json:"enabled"`
-	Bucket  string `mapstructure:"bucket" json:"bucket"`
-	Region  string `mapstructure:"region" json:"region"`
+type RemoteConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	URL     string `yaml:"url"`
+	Token   string `yaml:"token"`
 }
 
 type TaskConfig struct {
-	Command   string   `mapstructure:"command" json:"command"`
-	DependsOn []string `mapstructure:"dependsOn" json:"dependsOn"`
-	Inputs    []string `mapstructure:"inputs" json:"inputs"`
-	Outputs   []string `mapstructure:"outputs" json:"outputs"`
-	EnvKeys   []string `mapstructure:"env_keys" json:"env_keys"`
+	Command   string   `yaml:"command"`
+	Inputs    []string `yaml:"inputs"`
+	Outputs   []string `yaml:"outputs"`
+	DependsOn []string `yaml:"depends_on"`
+	EnvKeys   []string `yaml:"env_keys"`
 }
 
-// Load reads velocity.config.json from the current directory and unmarshals it into Config.
+// Load reads velocity.yml, expands env vars, and parses YAML.
 func Load() (*Config, error) {
-	v := viper.New()
-	v.SetConfigName(configName)
-	v.SetConfigType(configType)
-	v.AddConfigPath(".")
+	// Look for velocity.yml
+	path := "velocity.yml"
 
-	if err := v.ReadInConfig(); err != nil {
-		return nil, fmt.Errorf("read config: %w", err)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read config file: %w", err)
 	}
 
+	// Expand ${VAR} environment variables in the YAML
+	expanded := os.ExpandEnv(string(data))
+
 	var cfg Config
-	if err := v.Unmarshal(&cfg); err != nil {
+	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
 

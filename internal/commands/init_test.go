@@ -2,7 +2,6 @@ package commands
 
 import (
 	"bytes"
-	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	"github.com/bit2swaz/velocity-cache/internal/config"
 )
@@ -62,32 +62,32 @@ func TestInitGeneratesVelocityConfigFromTurbo(t *testing.T) {
 
 	require.NoError(t, runInit(cmd), "runInit should succeed")
 
-	generatedPath := filepath.Join(tmpDir, configFileName)
+	generatedPath := filepath.Join(tmpDir, "velocity.yml")
 	data, err := os.ReadFile(generatedPath)
 	require.NoError(t, err, "read generated config")
 
 	var cfg config.Config
-	require.NoError(t, json.Unmarshal(data, &cfg), "parse generated config")
+	require.NoError(t, yaml.Unmarshal(data, &cfg), "parse generated config")
 
 	assert.Equal(t, []string{"apps/*", "packages/*"}, cfg.Packages, "packages should reflect workspaces")
 
-	require.Contains(t, cfg.Tasks, "build", "build task should be present")
-	require.Contains(t, cfg.Tasks, "lint", "lint task should be present")
+	require.Contains(t, cfg.Pipeline, "build", "build task should be present")
+	require.Contains(t, cfg.Pipeline, "lint", "lint task should be present")
 
-	buildTask := cfg.Tasks["build"]
+	buildTask := cfg.Pipeline["build"]
 	assert.Equal(t, "npm run build", buildTask.Command)
 	assert.Equal(t, []string{"^build"}, buildTask.DependsOn)
 	assert.Equal(t, []string{"packages/app/**"}, buildTask.Inputs)
 	assert.Equal(t, []string{"dist/app"}, buildTask.Outputs)
 	assert.Equal(t, []string{"NODE_ENV"}, buildTask.EnvKeys)
 
-	lintTask := cfg.Tasks["lint"]
+	lintTask := cfg.Pipeline["lint"]
 	assert.Equal(t, "npm run lint", lintTask.Command)
 	assert.Empty(t, lintTask.DependsOn)
 	assert.Equal(t, []string{"packages/**/*.ts"}, lintTask.Inputs)
 	assert.Empty(t, lintTask.Outputs)
 	assert.Empty(t, lintTask.EnvKeys)
 
-	expectedMessage := "[VelocityCache] Detected turbo.json and created a velocity.config.json for you. Please review it for accuracy.\n"
-	assert.Equal(t, expectedMessage, stdout.String(), "init command should report turbo detection")
+	expectedMessage := "Generated velocity.yml\n"
+	assert.Equal(t, expectedMessage, stdout.String(), "init command should report generation")
 }

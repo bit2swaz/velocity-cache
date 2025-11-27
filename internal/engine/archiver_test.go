@@ -82,7 +82,7 @@ func TestCompressDuplicateBaseName(t *testing.T) {
 
 func TestCompressMissingDirectory(t *testing.T) {
 	tempDir := t.TempDir()
-	// Updated behavior: missing directories are ignored, not an error.
+
 	err := compress([]string{filepath.Join(tempDir, "missing")}, filepath.Join(tempDir, "missing.zip"), "")
 	if err != nil {
 		t.Fatalf("expected no error for missing directory (should be ignored), got %v", err)

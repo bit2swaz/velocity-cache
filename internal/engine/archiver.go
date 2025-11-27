@@ -17,7 +17,6 @@ func compress(outputs []string, targetZip string, packagePath string) (err error
 		return errors.New("compress: no outputs provided")
 	}
 
-	// If a packagePath is provided, change into it for the duration of the operation.
 	originalWd := ""
 	if strings.TrimSpace(packagePath) != "" {
 		wd, err := os.Getwd()
@@ -191,9 +190,6 @@ func extract(sourceZip string, outputs []string, packagePath string) (err error)
 		}()
 	}
 
-	// sourceZip is expected to be an absolute path (temporary file). Opening by absolute
-	// path is safe even after chdir, but we still compute a cleaned path first.
-
 	reader, err := zip.OpenReader(filepath.Clean(sourceZip))
 	if err != nil {
 		return fmt.Errorf("extract: open archive: %w", err)
@@ -331,7 +327,6 @@ func extract(sourceZip string, outputs []string, packagePath string) (err error)
 	return nil
 }
 
-// compress/extract public wrappers accept packagePath and forward to internal functions.
 func Compress(outputs []string, targetZip string, packagePath string) error {
 	return compress(outputs, targetZip, packagePath)
 }

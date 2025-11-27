@@ -1,11 +1,12 @@
 version: 1
-project_id: "test-project"
+project_id: "production-test"
 remote:
   enabled: true
-  url: "http://localhost:8080"
+  url: "http://localhost:8080" 
   token: "secret123"
 pipeline:
   build:
-    command: "echo building"
-    outputs: ["dist"]
+    command: "echo 'Production Build' > dist/prod.txt"
+    outputs: ["dist/**"]
     depends_on: []
+    inputs: ["velocity.yml"]

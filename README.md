@@ -1,193 +1,139 @@
-# velocity-cache ⚡
+# VelocityCache v3.0
 
-[![build status](https://img.shields.io/badge/build-passing-brightgreen)](https://github.com/bit2swaz/velocity-cache) [![npm version](https://img.shields.io/npm/v/velocity-cache)](https://www.npmjs.com/package/velocity-cache) [![license: mit](https://img.shields.io/badge/license-mit-blue.svg)](https://opensource.org/licenses/mit)
+**Stateless, Self-Hosted Remote Cache for High-Performance Monorepos.**
 
-a blazing-fast, open-source distributed build cache. built in go to accelerate your monorepo and ci/cd pipelines.
+VelocityCache is a distributed infrastructure component designed to accelerate CI/CD pipelines by caching build artifacts. Unlike SaaS solutions, VelocityCache is designed to be deployed inside your private VPC, ensuring **100% data sovereignty**, **zero external dependencies**, and **maximum speed**.
+
+"The Network is the Cache."
 
 ---
 
-![velocity-cache demo gif](termtosvg_mtmm_9z0.svg)
+## Why Self-Hosted?
 
-_a 10-minute monorepo build (cache miss) becomes a 10-second build (cache hit)._
+*   **Data Sovereignty:** Your code and artifacts never leave your VPC.
+*   **No SaaS Lock-in:** You own the infrastructure. No per-seat pricing or bandwidth overages.
+*   **Performance:** Designed for high-bandwidth internal networks (e.g., AWS VPC, K8s Clusters).
+*   **Simplicity:** Stateless architecture. No database to manage. Just a binary and an Object Store.
 
-## why velocity-cache?
+## Architecture: The "Vending Machine" Pattern
 
-software teams waste millions of dollars and thousands of developer-hours waiting for slow builds, tests, and ci jobs. this "wait time" is a direct drain on productivity and happiness.
+VelocityCache abandons the traditional "proxy everything" model in favor of a high-performance "Vending Machine" pattern. The server acts as a lightweight traffic controller, while the heavy lifting of data transfer happens directly between the CLI and your Object Storage.
 
-`velocity-cache` fixes this.
+### High-Level Data Flow
 
-it's a high-performance build system, written in go, that wraps your existing tasks. it understands your project's structure, even in a complex monorepo. it intelligently "fingerprints" your tasks. if it's seen that exact state before—on your machine, a teammate's, or in ci—it downloads the pre-computed result from a **shared cache** in seconds instead of re-running the task.
+1.  **Negotiation**: The Velocity CLI sends a hash of the inputs to the Server.
+2.  **Vending**:
+    *   **Cache Hit**: Server confirms existence.
+    *   **Cache Miss**: Server generates a **Presigned URL** (S3/MinIO) and returns it to the CLI.
+3.  **Transfer**: The CLI streams the artifact directly to/from the Object Storage using the presigned URL.
 
-the first person pays the time cost. everyone else benefits instantly.
+This architecture ensures the Server is never a bandwidth bottleneck.
 
-## features
+### Components
 
-- **true monorepo support:** understands task dependencies (`dependsOn`) and topological caching (`^`) just like turborepo.
-- **blazing fast:** built in go for high-performance, concurrent hashing and **parallel task execution**.
-- **language-agnostic:** first-class support for javascript, rust, go, and python projects.
-- **smart `init`:** auto-detects your project type (`turborepo`, `cargo`, `go.mod`, `poetry.lock`) to generate a config for you.
-- **distributed:** uses a **free public cache by default**, or your own private s3/r2 bucket.
-- **smart:** respects your `.gitignore` and hashes file contents, not just timestamps.
+*   **Velocity Agent (CLI)**: Runs in CI/Local. Handles hashing, graph execution, and direct storage transfers.
+*   **Velocity Gateway (Server)**: Stateless Go server. Handles authentication, generates tickets, and enforces security policies.
+*   **Storage Backend**: S3, MinIO, GCS, or Local Disk (via Proxy).
 
-## installation & usage
+## Installation
 
-the easiest way to use `velocity-cache` is with `npx`.
+### 1. The Local Cloud (Docker Compose)
 
-### 1. `npx velocity-cache init`
+The easiest way to spin up the entire stack (Server + MinIO) for testing.
 
-in the root of your project, run the `init` command.
+```yaml
+version: '3.8'
+services:
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password
+    ports:
+      - "9000:9000"
+      - "9001:9001"
 
-```bash
-npx velocity-cache init
-````
-
-`velocity-cache` will inspect your project:
-
-  * if it finds a `turbo.json`, `cargo.toml`, `go.mod`, or `requirements.txt`, it will **auto-generate** a `velocity.config.json` for you based on those settings.
-  * if not, it will create a generic template.
-
-**you must review this file** to ensure your `inputs` and `outputs` are correct.
-
-### 2\. `npx velocity-cache run <task-name>`
-
-this is the main command. it runs a task (like `build`) for all packages in your monorepo, in the correct dependency order.
-
-```bash
-# runs the 'build' task for all packages
-npx velocity-cache run build
+  velocity:
+    image: bit2swaz/velocity-server:v3
+    environment:
+      VC_PORT: 8080
+      VC_AUTH_TOKEN: secret-token
+      VC_STORAGE_DRIVER: s3
+      VC_S3_ENDPOINT: http://minio:9000
+      VC_S3_BUCKET: velocity-cache
+      VC_S3_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: admin
+      AWS_SECRET_ACCESS_KEY: password
+      AWS_REGION: us-east-1
+    ports:
+      - "8080:8080"
+    depends_on:
+      - minio
 ```
 
-to run a task for a **single package** and its dependencies, use the `-p` (`--package`) flag:
+### 2. Binary Installation
+
+Download the latest release for your platform.
 
 ```bash
-# runs the 'build' task for only 'apps/web' (and any of its dependencies)
-npx velocity-cache run build -p "apps/web"
+# Server
+./velocity-server
+
+# CLI
+./velocity-cli run build
 ```
 
-### 3\. `npx velocity-cache clean`
+## Configuration
 
-if you ever need to clear your *local* cache:
+### Server Configuration (Environment Variables)
 
-```bash
-npx velocity-cache clean
+The server follows the 12-Factor App methodology.
+
+| Variable | Description | Default |
+| :--- | :--- | :--- |
+| `VC_PORT` | Port to listen on | `8080` |
+| `VC_AUTH_TOKEN` | Shared secret for Bearer Auth | - |
+| `VC_STORAGE_DRIVER` | Storage backend (`s3` or `local`) | - |
+| `VC_S3_BUCKET` | Bucket name (for S3 driver) | - |
+| `VC_S3_REGION` | AWS Region (for S3 driver) | - |
+| `VC_LOCAL_ROOT` | Directory path (for Local driver) | - |
+
+### Client Configuration (`velocity.yml`)
+
+VelocityCache v3.0 uses a clean YAML configuration file in your project root.
+
+```yaml
+version: 1
+remote:
+  enabled: true
+  url: "http://localhost:8080"
+  token: "${VC_AUTH_TOKEN}" # Supports env var expansion
+
+pipeline:
+  build:
+    command: "npm run build"
+    inputs:
+      - "src/**"
+      - "package.json"
+    outputs:
+      - "dist/**"
+    depends_on:
+      - "^build" # Topological dependency
 ```
 
------
+## Security: First Write Wins
 
-## caching behavior: public vs. private
+VelocityCache implements a strict **Immutability Policy** to prevent cache poisoning.
 
-`velocity-cache` supports two remote caching modes:
+*   **Rule**: Once a cache key is written, it cannot be overwritten.
+*   **Mechanism**: During the `negotiate` phase, the server checks the storage driver. If the key exists, it returns `skipped`, and the CLI will not attempt an upload.
+*   **Benefit**: Guarantees that a specific input hash always resolves to the exact same artifact, regardless of race conditions in CI.
 
-### 1\. public community cache (default) 🌍
+## 📊 Observability
 
-  * **how it works:** if you **do not** provide any s3/r2 credentials (environment variables), `velocity-cache` will automatically use a free, shared, anonymous public cache hosted by the `velocity-cache` project.
-  * **pros:**
-      * **zero setup:** works instantly after `init`.
-      * **free:** no cost for storage or bandwidth.
-  * **cons:**
-      * **public:** your build artifacts are uploaded anonymously to a public bucket. **do not use this if your build outputs contain sensitive information.**
-      * **no guarantees:** cache entries expire after 7 days. intended for open-source projects and trying out `velocity-cache`.
+The server exposes a `/metrics` endpoint compatible with Prometheus.
 
-### 2\. private s3/r2 bucket (recommended for teams) 🔒
-
-  * **how it works:** if you **do** provide s3/r2 credentials via environment variables, `velocity-cache` will use your configured private bucket.
-  * **pros:**
-      * **secure:** your build artifacts stay within your control.
-      * **reliable:** you control the cache retention.
-  * **cons:**
-      * **requires setup:** you need to create an s3/r2 bucket and api token.
-      * **costs:** you pay for storage/operations (though r2 is very generous).
-
-**to use a private bucket:**
-
-1.  **create an s3/r2 bucket** (e.g., `my-company-build-cache`).
-
-2.  **create an api token/access key** with read/write permissions for that bucket.
-
-3.  **set these environment variables** in your local machine or ci environment:
-
-      * **for cloudflare r2:**
-        ```bash
-        export R2_ACCOUNT_ID="your_account_id"
-        export R2_ACCESS_KEY_ID="your_access_key_id"
-        export R2_SECRET_ACCESS_KEY="your_secret_access_key"
-        ```
-      * **for aws s3:**
-        ```bash
-        export AWS_ACCESS_KEY_ID="your_access_key_id"
-        export AWS_SECRET_ACCESS_KEY="your_secret_access_key"
-        export AWS_REGION="your_bucket_region" # e.g., us-east-1
-        ```
-
-4.  **update your `velocity.config.json`** with your bucket name and region.
-
-`velocity-cache` will automatically detect these environment variables and switch to using your private bucket.
-
------
-
-## how monorepo caching works 💡
-
-`velocity-cache` understands dependencies. this is the most important concept.
-
-  * `"dependsOn": ["lint"]`: (local dependency) this task will wait for the `lint` task *in the same package* to finish first.
-  * `"dependsOn": ["^build"]`: (topological dependency) this is the magic. this task will wait for the `build` task in all of its *internal package dependencies* (defined in `package.json`) to finish first.
-
-the cache key for a task (e.g., `apps/web#build`) is generated by hashing its own inputs *plus* the final cache keys of all its dependencies.
-
-**this means if a file in your `libs/ui` package changes, `libs/ui#build` gets a new hash. this new hash causes `apps/web#build` to get a new hash, correctly busting the cache all the way up the chain.**
-
-## configuration (`velocity.config.json`)
-
-`velocity-cache` now uses a monorepo-aware config.
-
-```json
-{
-  "$schema": "[https://velocitycache.dev/schema.json](https://velocitycache.dev/schema.json)",
-  "remote_cache": {
-    "enabled": true,
-    // required only if using a private cache
-    "bucket": "your-private-bucket-name",
-    "region": "auto" // e.g., us-east-1 for aws, auto for r2
-  },
-  "packages": [
-    "apps/*",
-    "libs/*"
-  ],
-  "tasks": {
-    "build": {
-      "command": "npm run build",
-      "dependsOn": ["^build"],
-      "inputs": ["src/**/*", "package.json"],
-      "outputs": ["dist/", ".next/"]
-    },
-    "test": {
-      "command": "npm run test",
-      "dependsOn": ["build"],
-      "inputs": ["src/**/*.test.ts"],
-      "outputs": ["coverage/"]
-    },
-    "lint": {
-      "command": "npm run lint",
-      "dependsOn": [],
-      "inputs": ["src/**/*.ts"]
-    }
-  }
-}
-```
-
-  * **`packages`**: an array of globs to find your individual packages (looks for `package.json`, `cargo.toml`, etc.).
-  * **`tasks`**: a map of task definitions.
-      * **`"build"`**: the name of the task you'll run (e.g., `npx velocity-cache run build`).
-      * **`command`**: the *actual* shell command to run on a cache miss.
-      * **`dependsOn`**: **critical.** an array of tasks this task depends on (see "how monorepo caching works" above).
-      * **`inputs`**: **critical.** list of files/globs `velocity` will hash. changes here trigger a cache miss.
-      * **`outputs`**: **critical.** list of directories created by `command`. these are cached.
-      * **`env_keys`**: list of environment variables included in the hash.
-
-## contributing
-
-pull requests are welcome\! for major changes, please open an issue first to discuss what you would like to change.
-
-## license
-
-[mit](https://opensource.org/licenses/mit)
+*   `vc_cache_hits`: Total cache hits.
+*   `vc_cache_misses`: Total cache misses.
+*   `vc_negotiation_latency`: Time taken to negotiate tickets.

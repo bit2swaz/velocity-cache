@@ -11,14 +11,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-// S3Driver implements storage.Driver for S3-compatible storage.
 type S3Driver struct {
 	client        *s3.Client
 	presignClient *s3.PresignClient
 	bucket        string
 }
 
-// New creates a new S3Driver using environment variables VC_S3_BUCKET and VC_S3_REGION.
 func New(ctx context.Context) (*S3Driver, error) {
 	bucket := os.Getenv("VC_S3_BUCKET")
 	if bucket == "" {
@@ -34,7 +32,9 @@ func New(ctx context.Context) (*S3Driver, error) {
 		return nil, fmt.Errorf("unable to load SDK config: %w", err)
 	}
 
-	client := s3.NewFromConfig(cfg)
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.UsePathStyle = true
+	})
 	presignClient := s3.NewPresignClient(client)
 
 	return &S3Driver{
@@ -44,7 +44,6 @@ func New(ctx context.Context) (*S3Driver, error) {
 	}, nil
 }
 
-// GetUploadURL generates a presigned PUT URL for the given key.
 func (d *S3Driver) GetUploadURL(ctx context.Context, key string) (string, error) {
 	req, err := d.presignClient.PresignPutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(d.bucket),
@@ -56,7 +55,6 @@ func (d *S3Driver) GetUploadURL(ctx context.Context, key string) (string, error)
 	return req.URL, nil
 }
 
-// GetDownloadURL generates a presigned GET URL for the given key.
 func (d *S3Driver) GetDownloadURL(ctx context.Context, key string) (string, error) {
 	req, err := d.presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(d.bucket),
@@ -68,15 +66,13 @@ func (d *S3Driver) GetDownloadURL(ctx context.Context, key string) (string, erro
 	return req.URL, nil
 }
 
-// Exists checks if an object exists using HeadObject.
 func (d *S3Driver) Exists(ctx context.Context, key string) (bool, error) {
 	_, err := d.client.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(d.bucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		// For now, we assume any error means the object does not exist.
-		// In a production environment, we should check for specific 404 errors.
+
 		return false, nil
 	}
 	return true, nil

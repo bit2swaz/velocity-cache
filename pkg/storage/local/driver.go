@@ -8,20 +8,17 @@ import (
 	"strings"
 )
 
-// LocalDriver implements storage.Driver for local filesystem storage.
 type LocalDriver struct {
 	root    string
 	baseURL string
 }
 
-// New creates a new LocalDriver.
 func New() (*LocalDriver, error) {
 	root := os.Getenv("VC_LOCAL_ROOT")
 	if root == "" {
 		return nil, fmt.Errorf("VC_LOCAL_ROOT is not set")
 	}
 
-	// Default to localhost:8080 if not set, but allow override
 	baseURL := os.Getenv("VC_BASE_URL")
 	if baseURL == "" {
 		baseURL = "http://localhost:8080"
@@ -35,17 +32,14 @@ func New() (*LocalDriver, error) {
 	return &LocalDriver{root: root, baseURL: baseURL}, nil
 }
 
-// GetUploadURL returns the URL for uploading a file.
 func (d *LocalDriver) GetUploadURL(ctx context.Context, key string) (string, error) {
 	return fmt.Sprintf("%s/v1/proxy/blob/%s", d.baseURL, key), nil
 }
 
-// GetDownloadURL returns the URL for downloading a file.
 func (d *LocalDriver) GetDownloadURL(ctx context.Context, key string) (string, error) {
 	return fmt.Sprintf("%s/v1/proxy/blob/%s", d.baseURL, key), nil
 }
 
-// Exists checks if the file exists in the local filesystem.
 func (d *LocalDriver) Exists(ctx context.Context, key string) (bool, error) {
 	path := filepath.Join(d.root, key)
 	_, err := os.Stat(path)

@@ -13,8 +13,6 @@ import (
 	"github.com/bit2swaz/velocity-cache/internal/config"
 )
 
-// Execute runs the script command defined in cfg and streams output directly to the caller's terminal.
-// It returns the command's exit code along with any execution error.
 func Execute(cfg config.TaskConfig, packagePath string) (int, error) {
 	return executeWithWriters(cfg, packagePath, os.Stdout, os.Stderr)
 }

@@ -11,17 +11,14 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 )
 
-// Represents a single package (e.g., "apps/web")
 type Package struct {
-	Name             string // e.g., "@my-repo/web"
-	Path             string // e.g., "apps/web"
+	Name             string
+	Path             string
 	PackageJsonPath  string
-	InternalDepNames []string   // Names of internal deps, e.g., ["@my-repo/ui"]
-	InternalDeps     []*Package // Pointers to be filled in
+	InternalDepNames []string
+	InternalDeps     []*Package
 }
 
-// DiscoverPackages finds package.json files for the provided glob patterns and extracts
-// internal workspace dependency references.
 func DiscoverPackages(patterns []string) (map[string]*Package, error) {
 	discovered := make(map[string]*Package)
 
@@ -48,7 +45,7 @@ func DiscoverPackages(patterns []string) (map[string]*Package, error) {
 			}
 
 			if existing, exists := discovered[pkg.Name]; exists {
-				// Keep the first discovered package to avoid silently overwriting.
+
 				if existing.PackageJsonPath != filepath.Clean(pkgJSONPath) {
 					return nil, fmt.Errorf("duplicate package %q found at %q and %q", pkg.Name, existing.PackageJsonPath, pkg.PackageJsonPath)
 				}
@@ -70,7 +67,6 @@ type packageJson struct {
 	PeerDependencies     map[string]string `json:"peerDependencies"`
 }
 
-// readPackageJson loads minimal information from a package.json to capture workspace deps.
 func readPackageJson(path string) (*Package, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -122,7 +118,6 @@ func collectWorkspaceDeps(depGroups ...map[string]string) []string {
 	return deps
 }
 
-// BuildPackageGraph connects each package to its internal dependencies.
 func BuildPackageGraph(packages map[string]*Package) error {
 	for _, pkg := range packages {
 		if len(pkg.InternalDepNames) == 0 {

@@ -1,10 +1,12 @@
 package commands
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -36,7 +38,6 @@ func runInit(cmd *cobra.Command) error {
 		return fmt.Errorf("%s already exists", configFileName)
 	}
 
-	// 1. Try Turbo Import
 	turboPath := filepath.Join(wd, "turbo.json")
 	packageJSONPath := filepath.Join(wd, "package.json")
 	if info, err := os.Stat(turboPath); err == nil && !info.IsDir() {
@@ -44,15 +45,13 @@ func runInit(cmd *cobra.Command) error {
 		if err != nil {
 			return fmt.Errorf("parse turbo.json: %w", err)
 		}
-		return writeYaml(targetPath, cfg)
+		return writeYaml(cmd, targetPath, cfg)
 	}
 
-	// 2. Try Language Detectors
 	if cfg, ok := detectLanguageProject(wd); ok {
-		return writeYaml(targetPath, cfg)
+		return writeYaml(cmd, targetPath, cfg)
 	}
 
-	// 3. Default Template
 	defaultCfg := &config.Config{
 		Version:   1,
 		ProjectID: "my-project",
@@ -70,10 +69,10 @@ func runInit(cmd *cobra.Command) error {
 			},
 		},
 	}
-	return writeYaml(targetPath, defaultCfg)
+	return writeYaml(cmd, targetPath, defaultCfg)
 }
 
-func writeYaml(path string, cfg *config.Config) error {
+func writeYaml(cmd *cobra.Command, path string, cfg *config.Config) error {
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return err
@@ -81,48 +80,101 @@ func writeYaml(path string, cfg *config.Config) error {
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		return err
 	}
-	fmt.Printf("Generated %s\n", path)
+	cmd.Printf("Generated %s\n", filepath.Base(path))
 	return nil
 }
 
-// --- Language Detection (Simplified for V3) ---
-
 func detectLanguageProject(root string) (*config.Config, bool) {
-	// Python
 	if _, err := os.Stat(filepath.Join(root, "requirements.txt")); err == nil {
 		return &config.Config{
 			Version: 1,
 			Pipeline: map[string]config.TaskConfig{
-				"test": {Command: "pytest", Inputs: []string{"**/*.py"}},
+				"test": {
+					Command: "pytest",
+					Inputs:  []string{"**/*.py", "requirements.txt", "poetry.lock"},
+					Outputs: []string{".venv/", ".cache/", "__pycache__/"},
+				},
+				"lint": {
+					Command: "flake8",
+				},
 			},
 		}, true
 	}
-	// Go
-	if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
+
+	if _, err := os.Stat(filepath.Join(root, "Cargo.toml")); err == nil {
 		return &config.Config{
 			Version: 1,
 			Pipeline: map[string]config.TaskConfig{
-				"build": {Command: "go build ./...", Inputs: []string{"**/*.go"}},
+				"build": {
+					Command: "cargo build --release",
+					Inputs:  []string{"src/**/*.rs", "Cargo.toml", "Cargo.lock"},
+					Outputs: []string{"target/"},
+				},
+				"test": {
+					Command: "cargo test",
+				},
+			},
+		}, true
+	}
+
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
+		moduleName := "app"
+		if f, err := os.Open(filepath.Join(root, "go.mod")); err == nil {
+			scanner := bufio.NewScanner(f)
+			for scanner.Scan() {
+				line := strings.TrimSpace(scanner.Text())
+				if strings.HasPrefix(line, "module ") {
+					parts := strings.Fields(line)
+					if len(parts) >= 2 {
+						modulePath := parts[1]
+						moduleParts := strings.Split(modulePath, "/")
+						moduleName = moduleParts[len(moduleParts)-1]
+					}
+					break
+				}
+			}
+			f.Close()
+		}
+
+		return &config.Config{
+			Version: 1,
+			Pipeline: map[string]config.TaskConfig{
+				"build": {
+					Command: fmt.Sprintf("go build -o bin/%s ./cmd/...", moduleName),
+					Inputs:  []string{"**/*.go", "go.mod", "go.sum"},
+					Outputs: []string{"bin/"},
+				},
 			},
 		}, true
 	}
 	return nil, false
 }
 
-// --- Turbo Parser (Adapted for YAML Config) ---
-
 type turboFile struct {
 	Pipeline map[string]struct {
 		DependsOn []string `json:"dependsOn"`
 		Inputs    []string `json:"inputs"`
 		Outputs   []string `json:"outputs"`
+		Env       []string `json:"env"`
 	} `json:"pipeline"`
+}
+
+type packageJSON struct {
+	Workspaces []string `json:"workspaces"`
 }
 
 func parseTurboConfig(turboPath, packageJSONPath string) (*config.Config, error) {
 	data, _ := os.ReadFile(turboPath)
 	var t turboFile
 	json.Unmarshal(data, &t)
+
+	var workspaces []string
+	if pkgData, err := os.ReadFile(packageJSONPath); err == nil {
+		var p packageJSON
+		if err := json.Unmarshal(pkgData, &p); err == nil {
+			workspaces = p.Workspaces
+		}
+	}
 
 	pipeline := make(map[string]config.TaskConfig)
 	for name, task := range t.Pipeline {
@@ -131,6 +183,7 @@ func parseTurboConfig(turboPath, packageJSONPath string) (*config.Config, error)
 			DependsOn: task.DependsOn,
 			Inputs:    task.Inputs,
 			Outputs:   task.Outputs,
+			EnvKeys:   task.Env,
 		}
 	}
 
@@ -138,5 +191,6 @@ func parseTurboConfig(turboPath, packageJSONPath string) (*config.Config, error)
 		Version:  1,
 		Remote:   config.RemoteConfig{Enabled: true, URL: "${VC_SERVER_URL}", Token: "${VC_AUTH_TOKEN}"},
 		Pipeline: pipeline,
+		Packages: workspaces,
 	}, nil
 }

@@ -19,7 +19,6 @@ import (
 	"github.com/bit2swaz/velocity-cache/internal/config"
 )
 
-// GenerateCacheKey returns a deterministic cache key for the supplied script config.
 func GenerateCacheKey(cfg config.TaskConfig, depCacheKeys []string, packagePath string) (string, error) {
 	localHash, err := computeLocalHash(cfg, packagePath)
 	if err != nil {
@@ -260,10 +259,6 @@ func hashString(value string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// GenerateTaskNodeCacheKey produces a cache key that is unique to a task node,
-// incorporating both the task configuration hash and the task's identity
-// (package path + task name). This prevents collisions when multiple packages
-// share identical task definitions.
 func GenerateTaskNodeCacheKey(node *TaskNode, depCacheKeys []string) (string, error) {
 	if node == nil {
 		return "", fmt.Errorf("task node is nil")

@@ -7,13 +7,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config represents the velocity.yml structure
 type Config struct {
 	Version   int                   `yaml:"version"`
 	ProjectID string                `yaml:"project_id"`
 	Remote    RemoteConfig          `yaml:"remote"`
 	Packages  []string              `yaml:"packages"`
-	Pipeline  map[string]TaskConfig `yaml:"pipeline"` // Renamed from 'Tasks'
+	Pipeline  map[string]TaskConfig `yaml:"pipeline"`
 }
 
 type RemoteConfig struct {
@@ -30,9 +29,8 @@ type TaskConfig struct {
 	EnvKeys   []string `yaml:"env_keys"`
 }
 
-// Load reads velocity.yml, expands env vars, and parses YAML.
 func Load() (*Config, error) {
-	// Look for velocity.yml
+
 	path := "velocity.yml"
 
 	data, err := os.ReadFile(path)
@@ -40,7 +38,6 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("read config file: %w", err)
 	}
 
-	// Expand ${VAR} environment variables in the YAML
 	expanded := os.ExpandEnv(string(data))
 
 	var cfg Config

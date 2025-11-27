@@ -27,7 +27,6 @@ var (
 	errorStyle  = color.New(color.FgHiRed, color.Bold)
 )
 
-// ExitError is an error that carries a specific exit code.
 type ExitError interface {
 	error
 	ExitCode() int
@@ -67,7 +66,7 @@ func newRunCommand() *cobra.Command {
 		Short: "Execute a pipeline task",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// cmd.SilenceUsage = true
+
 			return runScript(cmd, args[0], packageSelector)
 		},
 	}
@@ -79,13 +78,11 @@ func runScript(cmd *cobra.Command, taskName, packageSelector string) error {
 	ctx := cmd.Context()
 	out := cmd.OutOrStdout()
 
-	// 1. Load Config (YAML)
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	// 2. Discover Packages
 	packageGlobs := []string{"apps/*", "libs/*", "packages/*"}
 	if len(cfg.Packages) > 0 {
 		packageGlobs = cfg.Packages
@@ -102,20 +99,16 @@ func runScript(cmd *cobra.Command, taskName, packageSelector string) error {
 		}
 	}
 
-	// 3. Select Target
 	target, err := selectTargetPackage(packageSelector, packages)
 	if err != nil {
 		return err
 	}
 
-	// 4. Build Graph
-	// Note: cfg is passed to look up tasks in the Pipeline
 	root, err := engine.BuildTaskGraph(taskName, target, packages, cfg, nil)
 	if err != nil {
 		return fmt.Errorf("build task graph: %w", err)
 	}
 
-	// 5. Execute
 	exec := &Engine{
 		ctx:    ctx,
 		cfg:    cfg,
@@ -123,9 +116,8 @@ func runScript(cmd *cobra.Command, taskName, packageSelector string) error {
 		errOut: cmd.ErrOrStderr(),
 	}
 
-	// Initialize Remote Client if enabled in YAML
 	if cfg.Remote.Enabled {
-		// V3: No more S3 keys check. We just use the configured URL/Token.
+
 		exec.remote = engine.NewRemoteClient(cfg.Remote.URL, cfg.Remote.Token)
 	}
 
@@ -146,7 +138,6 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 		return "", nil
 	}
 
-	// Cycle/State checks
 	if task.State == 2 {
 		return task.CacheKey, nil
 	}
@@ -157,7 +148,6 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 
 	logTaskHeader(e.out, task.ID)
 
-	// 1. Run Dependencies (Parallel)
 	var wg sync.WaitGroup
 	var depKeys []string
 	var depMu sync.Mutex
@@ -184,7 +174,6 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 		return "", depErr
 	}
 
-	// 2. Generate Hash
 	key, err := engine.GenerateTaskNodeCacheKey(task, depKeys)
 	if err != nil {
 		return "", err
@@ -197,7 +186,6 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 		packagePath = task.Package.Path
 	}
 
-	// 3. Check Local Cache
 	cacheZip, found, err := engine.CheckLocal(key)
 	if err == nil && found {
 		if err := engine.Extract(cacheZip, task.TaskConfig.Outputs, packagePath); err == nil {
@@ -207,19 +195,17 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 		}
 	}
 
-	// 4. Check Remote Cache (V3 Negotiation)
 	if e.remote != nil {
 		resp, err := e.remote.Negotiate(e.ctx, key, "download")
 		if err == nil && resp.Status == "found" {
-			// HIT! Download it.
+
 			tmp, _ := os.CreateTemp("", "velo-dl-*.zip")
 			defer os.Remove(tmp.Name())
 
-			// V3 Transfer Agent handles S3 vs Proxy logic internally
 			err = engine.Transfer(e.ctx, "GET", resp.URL, e.cfg.Remote.URL, nil, tmp, 0, e.cfg.Remote.Token)
 			if err == nil {
 				tmp.Close()
-				// Save to local cache for next time
+
 				localZip, _ := engine.SaveLocal(key, tmp.Name())
 				engine.Extract(localZip, task.TaskConfig.Outputs, packagePath)
 
@@ -230,29 +216,23 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 		}
 	}
 
-	// 5. Execute Task (Cache Miss)
 	logCacheMissExecuting(e.out, task.TaskConfig.Command)
 	if _, err := engine.Execute(task.TaskConfig, packagePath); err != nil {
 		task.State = 3
 		return "", err
 	}
 
-	// 6. Upload Cache (V3 Negotiation)
-	// We only attempt upload if remote is enabled
 	if e.remote != nil {
 		resp, err := e.remote.Negotiate(e.ctx, key, "upload")
 		if err == nil && resp.Status == "upload_needed" {
 			logInfo(e.out, "Uploading artifact...")
 
-			// Compress
 			tmp, _ := os.CreateTemp("", "velo-up-*.zip")
 			defer os.Remove(tmp.Name())
 			engine.Compress(task.TaskConfig.Outputs, tmp.Name(), packagePath)
 
-			// Save to local cache first (so we have the file to upload)
 			localZip, _ := engine.SaveLocal(key, tmp.Name())
 
-			// Transfer
 			f, _ := os.Open(localZip)
 			stat, _ := f.Stat()
 			err = engine.Transfer(e.ctx, "PUT", resp.URL, e.cfg.Remote.URL, f, nil, stat.Size(), e.cfg.Remote.Token)
@@ -267,7 +247,7 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 			logInfo(e.out, "Artifact already exists remotely (skipped).")
 		}
 	} else {
-		// If remote is disabled, just save local
+
 		tmp, _ := os.CreateTemp("", "velo-local-*.zip")
 		defer os.Remove(tmp.Name())
 		engine.Compress(task.TaskConfig.Outputs, tmp.Name(), packagePath)
@@ -277,8 +257,6 @@ func (e *Engine) ExecuteTask(task *engine.TaskNode) (string, error) {
 	task.State = 2
 	return key, nil
 }
-
-// --- Helper Functions (Kept from your previous code) ---
 
 func selectTargetPackage(selector string, packages map[string]*engine.Package) (*engine.Package, error) {
 	if len(packages) == 0 {
@@ -359,7 +337,6 @@ func packageSliceDescriptions(pkgs []*engine.Package) []string {
 	return desc
 }
 
-// Logging helpers
 func prefix() string { return prefixStyle.Sprint("[VelocityCache]") }
 
 func logTaskHeader(out io.Writer, nodeID string) {

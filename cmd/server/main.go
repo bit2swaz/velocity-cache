@@ -16,19 +16,18 @@ import (
 )
 
 func main() {
-	// 1. Config
+
 	port := os.Getenv("VC_PORT")
 	if port == "" {
 		port = "8080"
 	}
 
 	authToken := os.Getenv("VC_AUTH_TOKEN")
-	driverType := os.Getenv("VC_STORAGE_DRIVER") // Renamed to match PRD standard
+	driverType := os.Getenv("VC_STORAGE_DRIVER")
 	if driverType == "" {
 		driverType = "local"
 	}
 
-	// 2. Initialize Driver
 	var store storage.Driver
 	var err error
 	ctx := context.Background()
@@ -48,20 +47,17 @@ func main() {
 
 	handler := api.NewHandler(store)
 
-	// 3. Router Setup
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
-	// Public Health Check
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"up"}`))
 	})
 
-	// 4. Authenticated Routes (The "Vending Machine")
 	r.Group(func(r chi.Router) {
-		// Apply Auth Middleware if token is set
+
 		if authToken != "" {
 			r.Use(AuthMiddleware(authToken))
 		} else {
@@ -70,7 +66,6 @@ func main() {
 
 		r.Post("/v1/negotiate", handler.HandleNegotiate)
 
-		// Proxy routes are only needed for local driver, but safe to expose protected
 		if driverType == "local" {
 			r.Put("/v1/proxy/blob/{key}", handler.HandleProxyUpload)
 			r.Get("/v1/proxy/blob/{key}", handler.HandleProxyDownload)
@@ -83,7 +78,6 @@ func main() {
 	}
 }
 
-// AuthMiddleware ensures the request has the correct Bearer token
 func AuthMiddleware(token string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

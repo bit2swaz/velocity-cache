@@ -15,7 +15,7 @@ type RemoteClient struct {
 }
 
 type NegotiateResponse struct {
-	Status string `json:"status"` // found, missing, skipped, upload_needed
+	Status string `json:"status"`
 	URL    string `json:"url,omitempty"`
 }
 

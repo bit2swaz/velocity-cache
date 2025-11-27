@@ -7,21 +7,18 @@ import (
 	"github.com/bit2swaz/velocity-cache/internal/config"
 )
 
-// Represents a single, unique task (e.g., "apps/web#build")
 type TaskNode struct {
-	ID           string // e.g., "apps/web#build"
+	ID           string
 	Package      *Package
-	TaskName     string // e.g., "build"
+	TaskName     string
 	TaskConfig   config.TaskConfig
-	Dependencies []*TaskNode // Other tasks it must wait for
+	Dependencies []*TaskNode
 
-	// State for execution
-	State     int // 0=pending, 1=running, 2=complete, 3=failed
+	State     int
 	CacheKey  string
 	LastError error
 }
 
-// BuildTaskGraph recursively constructs the dependency graph for the given task and package.
 func BuildTaskGraph(targetTaskName string, targetPackage *Package, allPackages map[string]*Package, cfg *config.Config, visiting map[string]bool) (*TaskNode, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("task graph requires configuration")
@@ -32,7 +29,7 @@ func BuildTaskGraph(targetTaskName string, targetPackage *Package, allPackages m
 
 	if allPackages != nil {
 		if _, ok := allPackages[targetPackage.Name]; !ok {
-			// Ensure the package is part of the discovered set; helps catch inconsistent graphs.
+
 			return nil, fmt.Errorf("package %q not found in discovered packages", targetPackage.Name)
 		}
 	}
@@ -54,7 +51,6 @@ func BuildTaskGraph(targetTaskName string, targetPackage *Package, allPackages m
 	visiting[nodeID] = true
 	defer delete(visiting, nodeID)
 
-	// Ensure InternalDeps is populated even if BuildPackageGraph was skipped.
 	if len(targetPackage.InternalDeps) == 0 && len(targetPackage.InternalDepNames) > 0 {
 		if allPackages == nil {
 			return nil, fmt.Errorf("package %q missing resolved dependencies", targetPackage.Name)

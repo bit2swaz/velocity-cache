@@ -38,7 +38,7 @@ Instead of handling heavy file uploads directly, the Server "vends" a ticket (UR
 3.  **Server**: Checks Storage Driver.
     *   If object exists: Returns `{"status": "skipped"}` (Immutability).
     *   If new: Calls Driver to generate a URL.
-4.  **Server**: Returns `{"status": "upload_needed", "url": "https://s3.aws.../abc-123", "method": "PUT"}`.
+4.  **Server**: Returns `{"status": "upload_needed", "url": "https://s3.aws.../abc-123"}`.
 5.  **CLI**: Reads response.
 6.  **CLI**: Performs a `PUT` request directly to the provided `url` with the file content.
 
@@ -79,7 +79,9 @@ No config files. Pure Environment Variables.
 *   `VC_STORAGE_DRIVER`: `s3` or `local`.
 *   `VC_S3_BUCKET`: Bucket name (for S3 driver).
 *   `VC_S3_REGION`: AWS Region (for S3 driver).
+*   `VC_S3_ENDPOINT`: Custom S3 Endpoint (e.g. for MinIO).
 *   `VC_LOCAL_ROOT`: Directory path (for Local driver).
+*   `VC_BASE_URL`: Public URL of the server (for Local driver).
 
 #### C. Immutability Logic (Security)
 *   **Rule**: "First Write Wins."
@@ -127,11 +129,11 @@ All endpoints (except `/health`) require `Authorization: Bearer <token>`.
     }
     ```
 *   **Response (Action: Download)**:
-    *   Found: `{"status": "found", "url": "https://s3...", "method": "GET"}`
+    *   Found: `{"status": "found", "url": "https://s3..."}`
     *   Missing: `{"status": "missing"}`
 *   **Response (Action: Upload)**:
     *   Exists: `{"status": "skipped"}`
-    *   New: `{"status": "upload_needed", "url": "https://s3...", "method": "PUT"}`
+    *   New: `{"status": "upload_needed", "url": "https://s3..."}`
 
 ### 4.2. Proxy Endpoint (Local Driver Only)
 *   **Endpoint**: `PUT /v1/proxy/{key}` and `GET /v1/proxy/{key}`

@@ -32,8 +32,13 @@ func New(ctx context.Context) (*S3Driver, error) {
 		return nil, fmt.Errorf("unable to load SDK config: %w", err)
 	}
 
+	endpoint := os.Getenv("VC_S3_ENDPOINT")
+
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.UsePathStyle = true
+		if endpoint != "" {
+			o.BaseEndpoint = aws.String(endpoint)
+		}
 	})
 	presignClient := s3.NewPresignClient(client)
 

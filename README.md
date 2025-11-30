@@ -1,5 +1,8 @@
 # VelocityCache v3.0
 
+![VelocityCache head to head against Vercel's Turborepo](vc_bm.png)
+*VelocityCache head to head against Vercel's Turborepo*
+
 **stateless, self-hosted remote cache for high-performance monorepos.**
 
 velocitycache is a distributed infrastructure component designed to accelerate ci/cd pipelines by caching build artifacts. unlike saas solutions, velocitycache is designed to be deployed inside your private vpc, ensuring **100% data sovereignty**, **zero external dependencies**, and **maximum speed**.

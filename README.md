@@ -1,7 +1,7 @@
 # VelocityCache v3.0
 
 ![VelocityCache head to head against Vercel's Turborepo](vc_bm.png)
-*velocityCache head to head against vercel's turborepo*
+*velocitycache head to head against vercel's turborepo*
 
 **stateless, self-hosted remote cache for high-performance monorepos.**
 

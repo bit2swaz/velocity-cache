@@ -1,7 +1,7 @@
 # VelocityCache v3.0
 
 ![VelocityCache head to head against Vercel's Turborepo](vc_bm.png)
-*VelocityCache head to head against Vercel's Turborepo*
+*velocityCache head to head against vercel's turborepo*
 
 **stateless, self-hosted remote cache for high-performance monorepos.**
 
@@ -176,4 +176,4 @@ the server exposes a `/metrics` endpoint compatible with prometheus.
 
 ---
 
-*made with ❤️ by [bit2swaz](x.com/bit2swaz)*
+*made with ❤️ by [bit2swaz](https://x.com/bit2swaz)*

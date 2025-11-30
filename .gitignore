@@ -1,8 +1,59 @@
+# --- Binaries ---
+# compiled output
 velocity-cli
+velocity-server
 server
+*.exe
+*.dll
+*.so
+*.dylib
+
+# --- Build Artifacts ---
 build/
-node_modules
+dist/
+bin/
+
+# --- Node.js / NPM ---
+node_modules/
+npm-debug.log
+yarn-error.log
+pnpm-debug.log
+.npm/
+
+# --- Go ---
+# Test coverage
+coverage.out
+coverage.html
+# Vendor directory (if you aren't checking in dependencies)
+vendor/
+
+# --- VelocityCache Specific ---
+# Local cache directory
+.velocity/
+# Local storage driver data (from your tests)
+tmp-cache-storage/
+# Local config (optional: comment this out if you want to commit the repo's own config for dogfooding)
+velocity.yml
+
+# --- System Files ---
+.DS_Store
+Thumbs.db
+
+# --- IDE / Editor ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- Environment Variables ---
 .env
-dist
-.velocity
-tmp-cache-storage
+.env.local
+.env.*.local
+
+# --- Docker ---
+# If you have local overrides
+docker-compose.override.yml
+
+# --- Testing ---
+# If you create temp test directories that aren't cleaned up
+test-harness-*/

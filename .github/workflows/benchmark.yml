@@ -9,42 +9,42 @@ on:
 jobs:
   benchmark:
     runs-on: ubuntu-latest
-    services:
-      # We use a service container for MinIO to act as our "Cloud"
-      minio:
-        image: minio/minio
-        ports:
-          - 9000:9000
-        env:
-          MINIO_ROOT_USER: admin
-          MINIO_ROOT_PASSWORD: password
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-          --entrypoint "minio server /data"
-
+    
     steps:
     - uses: actions/checkout@v4
 
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
-        go-version: '1.23'
+        go-version: '1.25'
+
+    # FIX: Start MinIO manually to ensure arguments are passed correctly
+    - name: Start MinIO
+      run: |
+        docker run -d \
+          --name minio \
+          -p 9000:9000 \
+          -e "MINIO_ROOT_USER=admin" \
+          -e "MINIO_ROOT_PASSWORD=password" \
+          minio/minio server /data
+        
+        # Wait for MinIO to be ready
+        echo "Waiting for MinIO..."
+        timeout 30s bash -c 'until curl --silent --fail http://localhost:9000/minio/health/live; do sleep 1; done'
+        echo "MinIO is up!"
+
+    - name: Setup MinIO Bucket
+      run: |
+        # Install mc (MinIO Client)
+        curl -O https://dl.min.io/client/mc/release/linux-amd64/mc
+        chmod +x mc
+        ./mc alias set local http://localhost:9000 admin password
+        ./mc mb local/velocity-cache
 
     - name: Build Velocity CLI & Server
       run: |
         go build -o velocity-cli ./cmd/velocity
         go build -o velocity-server ./cmd/server
-
-    - name: Setup MinIO Bucket
-      run: |
-        # Install mc (MinIO Client)
-        curl -O [https://dl.min.io/client/mc/release/linux-amd64/mc](https://dl.min.io/client/mc/release/linux-amd64/mc)
-        chmod +x mc
-        ./mc alias set local http://localhost:9000 admin password
-        ./mc mb local/velocity-cache
 
     - name: Start Velocity Server (Background)
       env:
@@ -59,8 +59,9 @@ jobs:
         AWS_ENDPOINT_URL: http://localhost:9000
       run: |
         ./velocity-server &
-        sleep 3 # Give it a moment to start
-        curl http://localhost:8080/health
+        # Wait for server health check
+        timeout 10s bash -c 'until curl --silent --fail http://localhost:8080/health; do sleep 1; done'
+        echo "Velocity Server is up!"
 
     - name: Configure Velocity Client
       run: |
@@ -79,7 +80,7 @@ jobs:
             depends_on: []
         EOF
 
-    - name: 🥶 Run Cold Build (Cache Miss)
+    - name: Run Cold Build (Cache Miss)
       run: |
         start_time=$(date +%s%3N)
         ./velocity-cli run build
@@ -87,11 +88,11 @@ jobs:
         echo "COLD_TIME=$((end_time - start_time))" >> $GITHUB_ENV
         echo "Cold build finished."
 
-    - name: 🧹 Clean Local State
+    - name: Clean Local State
       run: |
         rm -rf dist .velocity
 
-    - name: 🔥 Run Warm Build (Cache Hit)
+    - name: Run Warm Build (Cache Hit)
       run: |
         start_time=$(date +%s%3N)
         ./velocity-cli run build
@@ -99,13 +100,13 @@ jobs:
         echo "WARM_TIME=$((end_time - start_time))" >> $GITHUB_ENV
         echo "Warm build finished."
 
-    - name: 📊 Compare Results
+    - name: Compare Results
       run: |
-        echo "### 🚀 VelocityCache Benchmark Results" >> $GITHUB_STEP_SUMMARY
+        echo "### VelocityCache Benchmark Results" >> $GITHUB_STEP_SUMMARY
         echo "| Type | Duration (ms) |" >> $GITHUB_STEP_SUMMARY
         echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-        echo "| 🥶 Cold Miss | $COLD_TIME ms |" >> $GITHUB_STEP_SUMMARY
-        echo "| 🔥 Warm Hit | $WARM_TIME ms |" >> $GITHUB_STEP_SUMMARY
+        echo "| Cold Miss | $COLD_TIME ms |" >> $GITHUB_STEP_SUMMARY
+        echo "| Warm Hit | $WARM_TIME ms |" >> $GITHUB_STEP_SUMMARY
         
         SPEEDUP=$(($COLD_TIME / $WARM_TIME))
         echo "" >> $GITHUB_STEP_SUMMARY

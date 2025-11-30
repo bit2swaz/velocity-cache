@@ -112,6 +112,18 @@ download the latest release for your platform.
 ./velocity-cli run build
 ```
 
+### 3. NPM (Node.js)
+
+for javascript/typescript projects, you can use `npx` to run the cli without global installation.
+
+```bash
+# initialize velocity in your project
+npx velocity-cache@latest init
+
+# run a build task
+npx velocity-cache@latest run build
+```
+
 ## Configuration
 
 ### Server Configuration (Environment Variables)

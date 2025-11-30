@@ -1,0 +1,6 @@
+apiVersion: v2
+name: velocity
+description: A high-performance, stateless remote build cache for monorepos.
+type: application
+version: 0.1.0
+appVersion: "3.0.0"

@@ -1,0 +1,29 @@
+replicaCount: 2
+
+image:
+  repository: bit2swaz/velocity-server
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: "latest"
+
+service:
+  type: ClusterIP
+  port: 80
+
+env:
+  VC_PORT: "8080"
+  VC_STORAGE_DRIVER: "s3" # Options: s3, local
+  VC_S3_BUCKET: "velocity-cache"
+  VC_S3_REGION: "us-east-1"
+  # Secrets should be injected via k8s secrets, but can be set here for testing
+  # AWS_ACCESS_KEY_ID: ""
+  # AWS_SECRET_ACCESS_KEY: ""
+  # AWS_ENDPOINT_URL: "" 
+
+resources: 
+  limits:
+    cpu: 100m
+    memory: 128Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi

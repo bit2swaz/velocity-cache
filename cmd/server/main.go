@@ -5,7 +5,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -30,6 +32,13 @@ func main() {
 		driverType = "local"
 	}
 
+	retentionDays := 7
+	if v := os.Getenv("VC_RETENTION_DAYS"); v != "" {
+		if d, err := strconv.Atoi(v); err == nil && d > 0 {
+			retentionDays = d
+		}
+	}
+
 	var store storage.Driver
 	var err error
 
@@ -37,7 +46,13 @@ func main() {
 	case "s3":
 		store, err = s3.New(context.Background())
 	case "local":
-		store, err = local.New()
+		localStore, err := local.New()
+		if err == nil {
+			localStore.StartJanitor(time.Duration(retentionDays)*24*time.Hour, 1*time.Hour)
+			store = localStore
+		} else {
+			log.Fatalf("Failed to initialize local driver: %v", err)
+		}
 	default:
 		log.Fatalf("Unknown driver: %s", driverType)
 	}

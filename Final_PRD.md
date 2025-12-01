@@ -35,7 +35,7 @@ Stateless Client-Server architecture with pluggable storage drivers.
 
 ### 2.1 High-Level Data Flow
 
-```
+```mermaid
 sequenceDiagram
     participant CLI as Velocity Agent
     participant Server as Velocity Gateway

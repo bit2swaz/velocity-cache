@@ -80,7 +80,7 @@ func main() {
 		if authToken != "" {
 			r.Use(AuthMiddleware(authToken))
 		} else {
-			log.Println("⚠️ WARNING: Running without VC_AUTH_TOKEN. API is public.")
+			log.Println("WARNING: Running without VC_AUTH_TOKEN. API is public.")
 		}
 
 		r.Post("/v1/negotiate", handler.HandleNegotiate)

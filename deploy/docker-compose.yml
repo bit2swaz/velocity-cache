@@ -10,6 +10,13 @@ services:
       MINIO_ROOT_USER: admin
       MINIO_ROOT_PASSWORD: password123
 
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
   
   velocity:
     build:

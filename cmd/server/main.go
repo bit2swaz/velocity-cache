@@ -7,16 +7,18 @@ import (
 	"os"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"github.com/bit2swaz/velocity-cache/pkg/api"
+	"github.com/bit2swaz/velocity-cache/pkg/observability"
 	"github.com/bit2swaz/velocity-cache/pkg/storage"
 	"github.com/bit2swaz/velocity-cache/pkg/storage/local"
 	"github.com/bit2swaz/velocity-cache/pkg/storage/s3"
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 )
 
 func main() {
-
 	port := os.Getenv("VC_PORT")
 	if port == "" {
 		port = "8080"
@@ -30,11 +32,10 @@ func main() {
 
 	var store storage.Driver
 	var err error
-	ctx := context.Background()
 
 	switch driverType {
 	case "s3":
-		store, err = s3.New(ctx)
+		store, err = s3.New(context.Background())
 	case "local":
 		store, err = local.New()
 	default:
@@ -50,18 +51,21 @@ func main() {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	r.Use(observability.MetricsMiddleware)
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"up"}`))
 	})
 
-	r.Group(func(r chi.Router) {
+	r.Method(http.MethodGet, "/metrics", promhttp.Handler())
 
+	r.Group(func(r chi.Router) {
 		if authToken != "" {
 			r.Use(AuthMiddleware(authToken))
 		} else {
-			log.Println("WARNING: Running without VC_AUTH_TOKEN. API is public.")
+			log.Println("⚠️ WARNING: Running without VC_AUTH_TOKEN. API is public.")
 		}
 
 		r.Post("/v1/negotiate", handler.HandleNegotiate)

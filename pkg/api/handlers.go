@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/bit2swaz/velocity-cache/pkg/observability"
 	"github.com/bit2swaz/velocity-cache/pkg/storage"
 )
 
@@ -43,10 +44,12 @@ func (h *Handler) HandleNegotiate(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if exists {
+			observability.CacheOperations.WithLabelValues("upload", "skipped").Inc()
 			respondJSON(w, http.StatusOK, NegotiateResponse{Status: "skipped"})
 			return
 		}
 
+		observability.CacheOperations.WithLabelValues("upload", "needed").Inc()
 		url, err := h.store.GetUploadURL(ctx, req.Hash)
 		if err != nil {
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -63,10 +66,11 @@ func (h *Handler) HandleNegotiate(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if !exists {
+			observability.CacheOperations.WithLabelValues("download", "miss").Inc()
 			http.Error(w, "Not found", http.StatusNotFound)
 			return
 		}
-
+		observability.CacheOperations.WithLabelValues("download", "hit").Inc()
 		url, err := h.store.GetDownloadURL(ctx, req.Hash)
 		if err != nil {
 			http.Error(w, "Internal server error", http.StatusInternalServerError)

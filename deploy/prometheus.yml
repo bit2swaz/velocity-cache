@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: 'velocity-cache'
+    static_configs:
+      - targets: ['velocity:8080']

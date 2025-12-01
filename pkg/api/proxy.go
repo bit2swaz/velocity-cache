@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/bit2swaz/velocity-cache/pkg/observability"
 )
 
 func (h *Handler) HandleProxyUpload(w http.ResponseWriter, r *http.Request) {
@@ -19,17 +21,14 @@ func (h *Handler) HandleProxyUpload(w http.ResponseWriter, r *http.Request) {
 
 	root := os.Getenv("VC_LOCAL_ROOT")
 	if root == "" {
-		fmt.Println(" ERROR: VC_LOCAL_ROOT env var is missing in handler!")
 		http.Error(w, "Server configuration error: VC_LOCAL_ROOT not set", http.StatusInternalServerError)
 		return
 	}
 
 	path := filepath.Join(root, key)
-	fmt.Printf(" Attempting to write file to: %s\n", path)
 
 	out, err := os.Create(path)
 	if err != nil {
-		fmt.Printf(" Create File Error: %v\n", err)
 		http.Error(w, fmt.Sprintf("Failed to create file: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -37,12 +36,12 @@ func (h *Handler) HandleProxyUpload(w http.ResponseWriter, r *http.Request) {
 
 	n, err := io.Copy(out, r.Body)
 	if err != nil {
-		fmt.Printf("Copy Error: %v\n", err)
 		http.Error(w, fmt.Sprintf("Failed to write file: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	fmt.Printf("Successfully wrote %d bytes to %s\n", n, path)
+	observability.ProxyTraffic.WithLabelValues("in").Add(float64(n))
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -74,9 +73,13 @@ func (h *Handler) HandleProxyDownload(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 
-	_, err = io.Copy(w, file)
-	if err != nil {
+	n, err := io.Copy(w, file)
 
+	if n > 0 {
+		observability.ProxyTraffic.WithLabelValues("out").Add(float64(n))
+	}
+
+	if err != nil {
 		fmt.Printf("Error streaming file %s: %v\n", key, err)
 	}
 }
